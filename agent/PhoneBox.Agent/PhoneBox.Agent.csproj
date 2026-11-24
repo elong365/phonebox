@@ -46,7 +46,11 @@
 
   <ItemGroup>
     <!-- QR codes for pairing a phone over Wi-Fi (settings page) -->
-    <PackageReference Include="QRCoder" Version="1.9.0" />
+    <PackageReference Include="QRCoder" Version="1.8.1" />
+    <!-- GB18030 decoding for the Stocks widget's Tencent quote feed -->
+    <PackageReference Include="System.Text.Encoding.CodePages" Version="9.0.0" />
+    <!-- WorkBuddy session facts (title/model/status) live in its SQLite db -->
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="9.0.0" />
   </ItemGroup>
 
   <ItemGroup>

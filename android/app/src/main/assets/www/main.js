@@ -27,13 +27,7 @@ export const API = '/agent/api';
 // The phone's native proxy only forwards requests that carry this header (or image GETs), so script in a sandboxed
 // Custom HTML widget cannot reach the agent: adding the header to a cross-origin request needs a CORS preflight,
 // which the proxy refuses. See MainActivity.fromPanel.
-// A panel in a browser can stand for a device of its own (/panel/?device=monitor): the agent then gives it that device's
-// pages and home page from Settings › Phones, as it does for each phone (the app sends its id itself). Same rule as the
-// agent's for device ids: letters and digits, up to 32.
-const DEVICE = (() => {
-  try { const d = new URLSearchParams(location.search).get('device') || ''; return /^[A-Za-z0-9]{1,32}$/.test(d) ? d : ''; } catch (_) { return ''; }
-})();
-export const PANEL_HEADERS = { 'X-PhoneBox-Panel': '1', ...(DEVICE ? { 'X-PhoneBox-Device': DEVICE, 'X-PhoneBox-Model': 'Browser' } : {}) };
+export const PANEL_HEADERS = { 'X-PhoneBox-Panel': '1' };
 export const I18n = window.PhoneBoxI18n;
 export const t = (key, vars) => (I18n ? I18n.t(key, vars) : key);
 /** A panel literal translated by its English text (i18n.js PANEL); English when the language has no entry. */
@@ -61,7 +55,7 @@ export const $ = (id) => document.getElementById(id);
 // The native bridge (window.Android) is in every frame, sandboxed widgets included, so each call carries a key that only
 // the panel's own frames receive (MainActivity.bridgeKey). This wrapper adds it.
 const BRIDGE = ['battery', 'buzz', 'haptic', 'is24Hour', 'pcs', 'selectPc', 'forgetPc', 'setBrightness', 'setHomeScreen', 'setOrientation',
-  'setPinned', 'setVolumeKeys', 'setLanguage', 'transport', 'sensors', 'version', 'canListen', 'listen', 'stopListening', 'cancelListening', 'trackpad', 'canWake', 'wakePc'];
+  'setPinned', 'setVolumeKeys', 'setLanguage', 'transport', 'sensors', 'version', 'canListen', 'listen', 'stopListening', 'cancelListening', 'trackpad', 'canWake', 'wakePc', 'speak', 'speakStop'];
 export const bridge = typeof Android === 'undefined' ? null : Object.fromEntries(BRIDGE.filter((m) => typeof Android[m] === 'function')
   .map((m) => [m, (...args) => Android[m](window.__phoneboxKey || '', ...args)]));
 // Live preview inside the agent's layout editor: the layout comes from the editor (unsaved), not from the agent.
@@ -82,7 +76,7 @@ export const FALLBACK_PAGES = [{
 export const DEFAULT_CFG = {
   weather: { city: 'Tallinn', lat: 59.437, lon: 24.745, unit: 'celsius', model: '' },
   night: { enabled: true, start: '00:30', end: '07:30', brightness: 0.02 },
-  display: { showSeconds: true, idleReturnSec: 90, vibrate: true, finishToast: true, finishSound: false, finishSoundVolume: 70, volumeKeys: true, nightWhenUnreachable: false, unreachableNightDelayMin: 5, pageBar: 'dots', pageBarSide: 'bottom' },
+  display: { showSeconds: true, idleReturnSec: 90, vibrate: true, finishToast: true, volumeKeys: true, nightWhenUnreachable: false, unreachableNightDelayMin: 5, pageBar: 'dots', pageBarSide: 'bottom' },
   opencode: { alwaysCountdownSec: 10 },
   pages: FALLBACK_PAGES,
   shortcuts: [],
@@ -132,7 +126,7 @@ export let pushVersion = null;
 export const D = { state: null, quotas: null, work: null, procs: null, push: {}, weather: null, calendar: null, notes: store.get('notes', []) };
 
 export const HIST = 90;
-export const hist = { cpu: [], gpu: [], ram: [], vram: [], down: [], up: [], ping: [], gputemp: [], cputemp: [], hotspot: [], gpupower: [], gpuclock: [], cpupower: [] };
+export const hist = { cpu: [], gpu: [], ram: [], vram: [], down: [], up: [], ping: [], gputemp: [], cputemp: [], hotspot: [], gpupower: [], gpuclock: [] };
 export const pushHist = (k, v) => { const a = hist[k]; a.push(v ?? 0); if (a.length > HIST) a.shift(); };
 
 // ---------------------------------------------------------------- helpers
@@ -427,21 +421,7 @@ export function hour12() {
   }
   return false;
 }
-let clockPeriodLocale, clockPeriodFormatter;
-export function clockPeriod(date) {
-  const fallback = date.getHours() < 12 ? 'AM' : 'PM';
-  try {
-    if (clockPeriodLocale !== LOCALE) {
-      clockPeriodFormatter = new Intl.DateTimeFormat(LOCALE, { hour: 'numeric', hour12: true });
-      clockPeriodLocale = LOCALE;
-    }
-    return clockPeriodFormatter.formatToParts(date).find(part => part.type === 'dayPeriod')?.value || fallback;
-  } catch (_) {
-    return fallback;
-  }
-}
-export const fmtClock = (H, M, period = H < 12 ? 'AM' : 'PM') => (hour12() ? `${H % 12 || 12}:${pad(M)} ${period}` : `${pad(H)}:${pad(M)}`);
-const fmtNightClock = (d) => fmtClock(d.getHours(), d.getMinutes(), clockPeriod(d));
+export const fmtClock = (H, M) => (hour12() ? `${H % 12 || 12}:${pad(M)} ${H < 12 ? 'AM' : 'PM'}` : `${pad(H)}:${pad(M)}`);
 export const fmtHM = (d) => fmtClock(d.getHours(), d.getMinutes());
 export const fmtTime = (ms) => { const s = Math.max(0, Math.floor(ms / 1000)); return Math.floor(s / 60) + ':' + pad(s % 60); };
 export function fmtRate(bps) {
@@ -566,10 +546,7 @@ export const netMax = () => Math.max(1, ...hist.down, ...hist.up) * 1.15;
 
 export const METRICS = {
   cpu: { label: 'CPU', name: 'Processor', color: '--cpu', unit: '%', max: () => 100, val: (s) => s.pc?.cpu,
-    sub: (s) => {
-      const parts = [s.pc?.cpuTemp != null ? `${Math.round(s.pc.cpuTemp)}°C` : null, s.pc?.cpuPower != null ? `${Math.round(s.pc.cpuPower)} W` : null].filter(Boolean);
-      return parts.length ? parts.join(' · ') : shortCpu(s.pc?.cpuName);
-    }, title: (s) => s.pc?.cpuName },
+    sub: (s) => (s.pc?.cpuTemp != null ? `${Math.round(s.pc.cpuTemp)}°C` : shortCpu(s.pc?.cpuName)), title: (s) => s.pc?.cpuName },
   gpu: { label: 'GPU', name: 'Graphics', color: '--gpu', unit: '%', max: () => 100, val: (s) => gpuOf(s)?.util,
     sub: (s) => {
       const g = gpuOf(s);
@@ -619,8 +596,6 @@ export const METRICS = {
     sub: (s) => { const g = gpuOf(s); return g?.memClock != null ? tpv('Memory {n} MHz', { n: Math.round(g.memClock) }) : g?.clock == null ? tp('No clock data') : ''; } },
   cputemp: { label: 'CPU TEMP', name: 'CPU temperature', color: '#fb7185', unit: '°C', max: () => 100, hot: [75, 85], val: (s) => s.pc?.cpuTemp,
     sub: (s) => (s.pc?.cpuTemp == null ? tp('needs LibreHardwareMonitor') : shortCpu(s.pc?.cpuName)) },
-  cpupower: { label: 'CPU POWER', name: 'CPU power', color: '#a3e635', unit: 'W', max: () => Math.max(...hist.cpupower, 50), val: (s) => s.pc?.cpuPower,
-    sub: (s) => (s.pc?.cpuPower != null ? shortCpu(s.pc?.cpuName) : s.os === 'windows' ? tp('needs LibreHardwareMonitor') : tp('No power data')) },
 };
 
 export function metricText(m, s) {
@@ -702,17 +677,11 @@ export function wxLines() {
   const desc = wxText(c.weather_code);
   const hi = d.temperature_2m_max ? wxDeg(d.temperature_2m_max[0]) : null;
   const lo = d.temperature_2m_min ? wxDeg(d.temperature_2m_min[0]) : null;
-  // Isolate signed temperatures and arrows without changing the Arabic description.
-  const rtl = document.documentElement.dir === 'rtl';
-  const isolate = (value) => rtl ? '\u2066' + value + '\u2069' : value;
-  const apparent = wxDeg(c.apparent_temperature);
-  const feelsLike = t('wx.feelsLike', { deg: apparent })
-    .replace(`\u2068${apparent}\u2069°`, () => isolate(apparent + '°'));
   return {
     icon: wxIcon(c.weather_code, c.is_day),
     temp: wxDeg(c.temperature_2m) + '°',
     desc: `${desc} · ${cfg.weather?.city || ''}`,
-    range: (hi != null ? isolate(`↑${hi}° ↓${lo}°`) + ' · ' : '') + feelsLike,
+    range: (hi != null ? `↑${hi}° ↓${lo}° · ` : '') + t('wx.feelsLike', { deg: wxDeg(c.apparent_temperature) }),
   };
 }
 
@@ -983,7 +952,6 @@ export let workLoaded = false;
 
 /** Vibrates and shows a toast when a session finishes or starts waiting for input; the finish toast can be turned off. */
 export function notifyTransitions(sessions) {
-  let finished = 0;
   for (const s of sessions) {
     const before = prevStatus.get(s.id);
     if (workLoaded && before && before !== s.status) {
@@ -993,12 +961,10 @@ export function notifyTransitions(sessions) {
       } else if (s.status === 'idle' && (before === 'busy' || before === 'shell')) {
         buzz('0,70,110,70');
         if (cfg.display?.finishToast !== false) toast(t('panel.sessionFinished', { name: s.name }), 'ok');
-        finished++;
       }
     }
     prevStatus.set(s.id, s.status);
   }
-  if (finished > 0 && cfg.display?.finishSound) chime(cfg.display.finishSoundVolume ?? 70, true);
   workLoaded = true;
 }
 
@@ -1162,7 +1128,7 @@ armButton($('psAll'), t('panel.tapToConfirm'), async () => {
 $('psClose').addEventListener('click', () => { haptic(); closeSheet(); });
 
 // ---------------------------------------------------------------- pushed data (webhook API)
-/** Normalises whatever was pushed into { value, title, sub, unit, color, icon, progress, items, level }. */
+/** Normalises whatever was pushed into { value, title, sub, unit, color, icon, progress, items, level, announce }. */
 export function pushView(item) {
   const d = item.data;
   const v = { at: item.at };
@@ -1176,6 +1142,8 @@ export function pushView(item) {
     v.icon = d.icon;
     v.items = Array.isArray(d.items) ? d.items : undefined;
     v.level = d.level;
+    v.announce = d.announce;
+    v.announceKind = d.announceKind;
     if (typeof d.progress === 'number') v.progress = d.progress > 1 ? d.progress / 100 : d.progress;
     if (typeof d.min === 'number') v.min = d.min;
     if (typeof d.max === 'number') v.max = d.max;
@@ -1189,9 +1157,73 @@ export function fmtValue(x) {
   if (typeof x === 'boolean') return x ? tp('On') : tp('Off');
   return x == null ? '—' : String(x);
 }
-export const LEVEL_COLOR = { ok: '#22c55e', success: '#22c55e', warn: '#f59e0b', warning: '#f59e0b', error: '#ef4444', fail: '#ef4444', failure: '#ef4444', info: '#60a5fa' };
+export const LEVEL_COLOR = { ok: '#22c55e', success: '#22c55e', warn: '#f59e0b', warning: '#f59e0b', alert: '#ef4444', error: '#ef4444', fail: '#ef4444', failure: '#ef4444', info: '#60a5fa' };
 export const levelOf = (v) => v.level || (typeof v.value === 'string' ? (/^(ok|pass(ed)?|success|green|up|online)$/i.test(v.value) ? 'ok'
   : /^(fail(ed|ure)?|error|red|down|offline|broken)$/i.test(v.value) ? 'error' : /^(running|pending|building|warn(ing)?|yellow)$/i.test(v.value) ? 'warn' : '') : '');
+
+// The WB task stack drives a flashing screen border:
+//   需要确认 (level 'alert')  -> orange, flashes until the user decides
+//   执行中   (level 'warn')   -> green, flashes while the task runs
+//   已完成   (level 'ok')     -> red, flashes for 60 s, then fades out
+//   and the phone speaks "已完成《name》任务" when the PC marks one announce
+//   field: the PC knows exactly which task finished, the phone only reads it.
+// The colour with the highest priority wins: alert > warn > ok.
+const WB_BORDER_LEVELS = ['wb-border-alert', 'wb-border-warn', 'wb-border-ok'];
+function borderEl() {
+  let el = document.getElementById('wbBorder');
+  if (!el) { el = document.createElement('div'); el.id = 'wbBorder'; document.body.appendChild(el); }
+  return el;
+}
+/** Turn a task label into something that reads naturally when spoken:
+ *  drop truncation dots, quotes and markdown, shorten URLs to their host. */
+function speakableName(raw) {
+  let s = String(raw || '').trim();
+  if (!s) return '';
+  s = s.replace(/https?:\/\/\S+/g, (m) => {
+    try { return '链接 ' + new URL(m).hostname.replace(/^www\./, ''); } catch (_) { return '链接'; }
+  });
+  s = s.replace(/[…\.。]{2,}|。$/g, '').replace(/[【】""''`*_#>]/g, '').replace(/\s+/g, ' ').trim();
+  return s.slice(0, 40);
+}
+export function updateAlertBorder() {
+  const items = [];
+  let announce = '', announceKind = '';
+  for (const item of Object.values(D.push || {})) {
+    const v = item && pushView(item);
+    if (!v) continue;
+    const list = v.items || (v.value != null && typeof v.value === 'object' && Array.isArray(v.value.items) ? v.value.items : []);
+    if (Array.isArray(list)) items.push(...list);
+    else if (v.level) items.push(v);
+    if (v.announce) { announce = v.announce; announceKind = v.announceKind || 'done'; }
+  }
+  const has = (lvl) => items.some((x) => x && x.level === lvl);
+  let cls = '';
+  if (has('alert')) cls = 'wb-border-alert';
+  else if (has('warn')) cls = 'wb-border-warn';
+  else if (has('ok')) cls = 'wb-border-ok';
+  const el = borderEl();
+  const was = WB_BORDER_LEVELS.some((c) => el.classList.contains(c));
+  el.classList.remove(...WB_BORDER_LEVELS);
+  if (cls) el.classList.add(cls);
+  // a completed task keeps flashing red for 60 s, then the border goes dark
+  clearTimeout(updateAlertBorder._okTimer);
+  if (cls === 'wb-border-ok' && !was) {
+    updateAlertBorder._okTimer = setTimeout(() => el.classList.remove('wb-border-ok'), 60_000);
+  }
+  // the PC sent the exact task + sentence kind: speak it once per announce
+  if (announce) {
+    const key = announceKind + '|' + announce;
+    if (updateAlertBorder._lastSpoken !== key && bridge?.speak) {
+      updateAlertBorder._lastSpoken = key;
+      const name = speakableName(announce);
+      if (name) bridge.speak(announceKind === 'confirm'
+        ? '需要您到电脑上确认' + name + '任务'
+        : '已完成' + name + '任务');
+    }
+  }
+  // one short buzz when a new state starts, not on every poll while it persists
+  if (cls && !was) buzz(cls === 'wb-border-alert' ? '0,90,90,90' : '0,60');
+}
 
 // ---------------------------------------------------------------- notifications (POST /api/notify)
 export function handleNotify(d) {
@@ -1716,8 +1748,7 @@ export const resolvePage = (ref) => {
   const n = typeof ref === 'number' ? ref - 1 : /^\d+$/.test(String(ref)) ? +ref - 1 : pages.findIndex((p) => p.id === ref || p.title.toLowerCase() === String(ref).toLowerCase());
   return n >= 0 && n < pages.length ? n : -1;
 };
-// this device's own home page (Settings › Phones) comes before the global one
-export const homeIndex = () => { const id = cfg.homePage || cfg.display?.homePage; const i = id ? pages.findIndex((p) => p.id === id) : -1; return i >= 0 ? i : 0; };
+export const homeIndex = () => { const id = cfg.display?.homePage; const i = id ? pages.findIndex((p) => p.id === id) : -1; return i >= 0 ? i : 0; };
 
 // ================================================================= calm page switching
 // Rules, webhooks and the idle return ask for a page instead of jumping to it. A request waits while you are using the
@@ -2002,8 +2033,8 @@ $('ovRules').addEventListener('click', (e) => { e.stopPropagation(); toggleRules
 
 let dotsHoldTimer = 0, dotsHoldStart = null, heldDots = false;
 // ---- the page bar: the dots shown as buttons with each page's icon and name (Settings › Display › Page navigation)
-/** dots (default), auto (a bar while the dots are being used), bar (always, with its own space) or hidden (none). */
-export const pageBarMode = () => (['auto', 'bar', 'hidden'].includes(cfg.display?.pageBar) ? cfg.display.pageBar : 'dots');
+/** dots (default), auto (a bar while the dots are being used) or bar (always, with its own space). */
+export const pageBarMode = () => (['auto', 'bar'].includes(cfg.display?.pageBar) ? cfg.display.pageBar : 'dots');
 const pageBarSide = () => (['left', 'right'].includes(cfg.display?.pageBarSide) ? cfg.display.pageBarSide : 'bottom');
 let pageBarKey = '', pageBarTimer = 0, pageBarOpen = false;
 /** In "auto" mode, opens the bar and closes it again 5 s after the last touch on it. */
@@ -2029,7 +2060,6 @@ export function applyPageBar() {
   pageBarKey = key;
   const b = document.body.classList;
   b.toggle('pagebar-docked', docked);
-  b.toggle('dots-hidden', mode === 'hidden'); // swipes, the volume keys and a long press on an empty spot still work (#475)
   b.toggle('pagebar-left', side === 'left');
   b.toggle('pagebar-right', side === 'right');
   $('dots').classList.toggle('pagebar', shown);
@@ -2159,25 +2189,11 @@ let swipeStartPage = 0;
 let swipeStartTime = 0;
 let swipeTracking = false;
 
-/**
- * Whether a sideways swipe that starts on el turns the page, as the browser decides it from touch-action: the wrap at
- * either end follows the same rule as an ordinary page turn. A button or a card turns the page; the page dots, a
- * slider or anything else that keeps sideways moves for itself does not (#487).
- */
-function swipeTurnsPage(el) {
-  for (let n = el; n && n !== pager; n = n.parentElement) {
-    const ta = getComputedStyle(n).touchAction;
-    if (ta !== 'auto' && ta !== 'manipulation' && !/pan-(x|left|right)/.test(ta)) return false;
-  }
-  return true;
-}
-
 pager.addEventListener('touchstart', (e) => {
   swipeTracking = false;
   if (e.touches.length !== 1 || pages.length < 2) return;
   // Dragging a slider, the volume bar, a list or the station carousel must never flip (or wrap) the page.
-  if (volDragging || e.target.closest?.('input, textarea, select, [contenteditable], .s-list, .vb, .bar, .radio-carousel-track, .ac-dial')
-    || !swipeTurnsPage(e.target)) return;
+  if (volDragging || e.target.closest?.('button, input, textarea, select, a, [contenteditable], .s-list, .vb, .bar, .radio-carousel-track, .ac-dial')) return;
   swipeStartX = e.touches[0].clientX;
   swipeStartY = e.touches[0].clientY;
   swipeStartPage = curPage;
@@ -2385,7 +2401,7 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden) undi
 export function tick() {
   if (lastHour12 !== null && hour12() !== lastHour12) { buildLayout(); renderRulesBtn(); }
   const now = new Date();
-  $('nClock').textContent = fmtNightClock(now);
+  $('nClock').textContent = fmtHM(now);
   $('nDate').textContent = now.toLocaleDateString(LOCALE, { weekday: 'long', day: 'numeric', month: 'long' });
   if (darkSince && Date.now() - darkSince > 30_000) darkRoom = true;
   reconcileUnreachableNight(now);
@@ -2401,29 +2417,6 @@ export function tick() {
 }
 
 // ---------------------------------------------------------------- data from the agent
-// The wallpaper (Settings › Display): one picture behind every page, darkened and optionally blurred so the widgets
-// stay readable. Its revision is in the URL, so an unchanged picture comes from the cache and a new one is fetched.
-let wallpaperRev = null;
-function applyWallpaper(w = {}) {
-  const rev = cfg.wallpaperRev ?? null;
-  let el = document.getElementById('wallpaper');
-  document.body.classList.toggle('has-wallpaper', rev != null);
-  if (rev == null) { el?.remove(); wallpaperRev = null; return; }
-  if (!el) {
-    el = document.createElement('div');
-    el.id = 'wallpaper';
-    el.setAttribute('aria-hidden', 'true');
-    document.body.prepend(el);
-  }
-  const num = (v, def, max) => (Number.isFinite(+v) && v !== null && v !== '' ? Math.min(max, Math.max(0, +v)) : def);
-  el.style.setProperty('--wp-dim', String(num(w.dim, 45, 90) / 100));
-  el.style.setProperty('--wp-blur', `${num(w.blur, 0, 20)}px`);
-  if (rev !== wallpaperRev) {
-    el.style.backgroundImage = `url("${API}/wallpaper?v=${encodeURIComponent(String(rev))}")`;
-    wallpaperRev = rev;
-  }
-}
-
 export function applyDisplay() {
   const d = cfg.display || {};
   const langChanged = I18n ? I18n.setLang(d.language || 'auto') : false;
@@ -2437,7 +2430,6 @@ export function applyDisplay() {
   document.documentElement.style.setProperty('--accent', `rgb(${DEFAULT_AMBIENT})`);
   artTint = d.artTint !== false;
   if (before !== DEFAULT_AMBIENT || !artTint) setAmbient(artTint ? currentArtColor : null);
-  applyWallpaper(d.wallpaper);
   if (langChanged) { buildLayout(); renderApproval(); }
   renderRulesBtn();
   if (PREVIEW || !bridge) return;
@@ -2531,6 +2523,7 @@ export async function loadPush() {
     D.push = r.items || {};
     pushVersion = r.version;
     emit('push');
+    try { updateAlertBorder(); } catch (e) { console.error('wbBorder', e); }
   } catch (_) {}
 }
 
@@ -2628,7 +2621,6 @@ export function applyState(s, replayGen = null) {
       pushHist('hotspot', pc.gpu?.hotSpot);
       pushHist('gpupower', pc.gpu?.power ?? pc.gpu?.powerPct);
       pushHist('gpuclock', pc.gpu?.clock);
-      pushHist('cpupower', pc.cpuPower);
     }
   }
   emit('state');
@@ -2722,7 +2714,7 @@ document.addEventListener('visibilitychange', () => {
   if (!document.hidden && lastHour12 !== null && hour12() !== lastHour12) {
     buildLayout();
     renderRulesBtn();
-    $('nClock').textContent = fmtNightClock(new Date());
+    $('nClock').textContent = fmtHM(new Date());
   }
 });
 poll();

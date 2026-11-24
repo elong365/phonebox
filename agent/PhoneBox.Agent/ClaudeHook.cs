@@ -19,14 +19,20 @@ public static class ClaudeHook
     public static async Task<object?> HandleAsync(JsonElement input, ConfigStore cfg, ApprovalStore approvals, SessionMonitor sessions, CancellationToken aborted)
         => await HandlePermissionAsync(input, cfg, approvals, sessions, aborted, "Claude Code", "claude:", allowQuestions: true);
 
-    /// <summary>Shared PermissionRequest protocol used by Claude Code, Codex and compatible agents.</summary>
+    /// <summary>Shared PermissionRequest protocol used by Claude Code, Codex, WorkBuddy and compatible agents.
+    /// <paramref name="workbuddy"/> picks WorkBuddy's own switches (its settings, not Claude's).</summary>
     internal static async Task<object?> HandlePermissionAsync(JsonElement input, ConfigStore cfg, ApprovalStore approvals,
-        SessionMonitor sessions, CancellationToken aborted, string source, string? sessionPrefix, bool allowQuestions)
+        SessionMonitor sessions, CancellationToken aborted, string source, string? sessionPrefix, bool allowQuestions,
+        bool workbuddy = false)
     {
         if (input.ValueKind != JsonValueKind.Object) return null;
-        var c = cfg.Get().Claude;
-        if (!c.PhoneApprovals) { approvals.Skipped(source, "Ask on the phone is off"); return null; }
-        if (c.OnlyWhenAway && Idle.Seconds() < 60) { approvals.Skipped(source, "the computer is in use (Only when I am away)"); return null; }
+        var claudeC = cfg.Get().Claude;
+        var wbC = cfg.Get().WorkBuddy;
+        var phoneApprovals = workbuddy ? wbC.PhoneApprovals : claudeC.PhoneApprovals;
+        var onlyWhenAway = workbuddy ? wbC.OnlyWhenAway : claudeC.OnlyWhenAway;
+        var timeoutSec = workbuddy ? wbC.TimeoutSec : claudeC.TimeoutSec;
+        if (!phoneApprovals) return null;
+        if (onlyWhenAway && Idle.Seconds() < 60) return null;
 
         var tool = Str(input, "tool_name") ?? "a tool";
         var ti = input.TryGetProperty("tool_input", out var t) && t.ValueKind == JsonValueKind.Object ? t : default;
@@ -39,7 +45,7 @@ public static class ClaudeHook
         var question = allowQuestions && tool == "AskUserQuestion";
         var shownCwd = cwd.Length <= 1000 ? cwd : "…" + cwd[^999..];
         var a = new Approval(ApprovalStore.NewId(), source, sessionId, project, shownCwd, ToolTitle(tool), question ? QuestionDetail(ti) : Detail(tool, ti),
-            ti.ValueKind == JsonValueKind.Object ? Str(ti, "description") : null, now, now + Math.Clamp(c.TimeoutSec, 10, 3600) * 1000L,
+            ti.ValueKind == JsonValueKind.Object ? Str(ti, "description") : null, now, now + Math.Clamp(timeoutSec, 10, 3600) * 1000L,
             question ? "question" : "permission");
 
         var decision = await approvals.AskAsync(a, aborted);

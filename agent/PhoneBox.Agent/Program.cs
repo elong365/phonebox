@@ -66,7 +66,6 @@ builder.Services.AddSingleton(usb);
 builder.Services.AddSingleton<AudioControl>();
 builder.Services.AddSingleton<AppCatalog>();
 builder.Services.AddSingleton(_ => new ShortcutIconUploads(Path.Combine(configDir, "icons")));
-builder.Services.AddSingleton(_ => new WallpaperStore(configDir));
 builder.Services.AddSingleton<PairingCodes>();
 builder.Services.AddSingleton<SpotifyControl>();
 builder.Services.AddSingleton<PlexControl>();
@@ -102,6 +101,7 @@ AddMonitor<SteamMonitor>(builder.Services);
 builder.Services.AddSingleton<SteamLibrary>();
 builder.Services.AddSingleton(sp => new LyricsService(sp.GetRequiredService<ConfigStore>(), sp.GetRequiredService<ILogger<LyricsService>>()));
 AddMonitor<BatteryMonitor>(builder.Services);
+builder.Services.AddSingleton<StockService>();
 AddMonitor<RuleEngine>(builder.Services);
 AddMonitor<ChargeGuard>(builder.Services);
 builder.Services.AddHostedService<Tray>();
@@ -271,9 +271,7 @@ app.Use(async (ctx, next) =>
             return;
         }
     }
-    // any request from the app shows the phone is there, not only a state poll: an app on the live stream polls
-    // nothing, and a stream that is not yet (or no longer) open must not hide the phone from a permission prompt (#497)
-    if (ctx.Request.Headers.ContainsKey("X-PhoneBox-App"))
+    if (ctx.Request.Path.StartsWithSegments("/api/state") && ctx.Request.Headers.ContainsKey("X-PhoneBox-App"))
         Interlocked.Exchange(ref ApprovalStore.PhoneLastSeen, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
     if (ctx.Request.Headers.TryGetValue("X-PhoneBox-Device", out var device))
     {
@@ -353,7 +351,7 @@ app.MapGet("/api/lan", (ConfigStore cfg) => Results.Json(new
     fingerprint = lanCert is null ? null : Lan.Fingerprint(lanCert),
 }));
 
-app.MapGet("/api/update", (UpdateService upd, ConfigStore cfg) => Results.Json(new { status = upd.Status(), auto = cfg.Get().Updates.Auto, installed = UpdateService.CanUpdateAgent }));
+app.MapGet("/api/update", (UpdateService upd, ConfigStore cfg) => Results.Json(new { status = upd.Status(), auto = cfg.Get().Updates.Auto, installed = UpdateService.RunningInstalled }));
 // Settings › General: install the phone app on a phone that does not have it yet (local only).
 app.MapPost("/api/phone/install", async (UpdateService upd) =>
     await upd.InstallAppAsync() is { } error ? Results.BadRequest(new { error }) : Results.Ok(new { ok = true }));
@@ -606,6 +604,28 @@ app.MapGet("/api/feeds", (FeedMonitor feeds) =>
     var s = feeds.Snapshot();
     return Results.Json(new { s.Items, s.Updated, s.Errors, canOpen = feeds.OpenAllowed() });
 });
+// Quotes for the Stocks widget: the watchlist comes from Config.Stocks, or an explicit list.
+app.MapGet("/api/stocks", (StockService stocks, string? symbols) =>
+{
+    var (quotes, updated, error) = stocks.Snapshot(symbols);
+    return Results.Json(new { quotes, updated, error });
+});
+// Intraday minute prices for one symbol (the Stocks widget's chart mode).
+app.MapGet("/api/stocks/minutes", (StockService stocks, string? code) =>
+{
+    var (points, prev, date, updated, error) = stocks.Minutes(code);
+    return points is null
+        ? Results.Json(new { error = error ?? "no data" }, statusCode: 404)
+        : Results.Json(new { points, prevClose = prev, date, updated, error });
+});
+// Guba (East Money stock forum) latest posts for one stock code, e.g. "002317".
+app.MapGet("/api/guba", (string? code, int? count) =>
+{
+    var (posts, updated, error) = GubaFeed.Latest(code, count ?? 10);
+    return posts is null
+        ? Results.Json(new { error = error ?? "no data" }, statusCode: 404)
+        : Results.Json(new { posts, updated, error });
+});
 // Photo frame: ids of the photos in the chosen folder, then one (scaled-down) photo at a time by id.
 app.MapGet("/api/photos", (PhotoFrame photos) =>
 {
@@ -812,13 +832,9 @@ app.MapGet("/api/state", (long? ev, HttpContext ctx) => Results.Json(State(ctx.R
 // One "state" frame for all open streams: they wake on the same second (below), so the state is built and serialized once
 // per tick, not once per phone. Everything State() reads is a singleton, so the root provider will do.
 var stateFrames = new StateFrameCache(() => State(app.Services, null), new JsonSerializerOptions(JsonSerializerDefaults.Web));
-app.MapGet("/api/stream", async (HttpContext ctx, PushStore push, SessionMonitor sessions, GitHubMonitor gh, SpectrumAnalyzer spectrum,
-    IHostApplicationLifetime life, ILogger<Program> log) =>
+app.MapGet("/api/stream", async (HttpContext ctx, PushStore push, SessionMonitor sessions, GitHubMonitor gh, SpectrumAnalyzer spectrum, ILogger<Program> log) =>
 {
-    // Ends when the agent begins to stop, too: the server otherwise waits up to 30 s for this never-ending response
-    // before it lets a restart, an update or Quit finish.
-    using var linked = CancellationTokenSource.CreateLinkedTokenSource(ctx.RequestAborted, life.ApplicationStopping);
-    var ct = linked.Token;
+    var ct = ctx.RequestAborted;
     var isPhone = ctx.Request.Headers.ContainsKey("X-PhoneBox-App");
     var via = ctx.Connection.LocalPort == usb.Port ? "USB" : ctx.Connection.LocalPort == Port ? "local" : "Wi-Fi";
     log.LogInformation("live stream opened ({Who}, {Via})", isPhone ? "phone" : "other client", via);
@@ -913,9 +929,7 @@ app.MapDelete("/api/claude/hook", (ConfigStore cfg) => ClaudeHook.Configure(fals
 // turns on Settings › Claude Code › "Show the conversation on the phone"; only a session the monitor currently sees.
 app.MapGet("/api/work/conversation", (string id, ConfigStore cfg, SessionMonitor sessions) =>
 {
-    // a session inside WSL keeps its chat file in the distro's home; a distro that stopped is not read (that would start it)
-    var home = sessions.ConversationHome(id, out var usable);
-    return Results.Json(ClaudeTranscript.ForPhone(cfg.Get().Claude.ShareConversation, usable ? sessions.Snapshot() : [], id, home));
+    return Results.Json(ClaudeTranscript.ForPhone(cfg.Get().Claude.ShareConversation, sessions.Snapshot(), id));
 });
 
 // Codex uses the same PermissionRequest decision contract, through ~/.codex/hooks.json.
@@ -930,6 +944,12 @@ app.MapPost(CodexHook.Endpoint, async (HttpRequest req, ConfigStore cfg, Approva
 app.MapGet("/api/codex/hook", () => Results.Json(new { installed = CodexHook.Installed(), path = CodexHook.HooksPath }));
 app.MapPost("/api/codex/hook", (ConfigStore cfg) => CodexHook.Configure(true, Port, cfg.Get().Claude.TimeoutSec) is { } err ? Results.BadRequest(new { error = err }) : Results.Ok());
 app.MapDelete("/api/codex/hook", (ConfigStore cfg) => CodexHook.Configure(false, Port, cfg.Get().Claude.TimeoutSec) is { } err ? Results.BadRequest(new { error = err }) : Results.Ok());
+
+// WorkBuddy answers the same Claude-protocol PermissionRequest hook; its settings file is ~/.workbuddy/settings.json
+// and the endpoint stays Claude's, so one installed hook serves both. Its config gates the answer.
+app.MapGet("/api/workbuddy/hook", () => Results.Json(new { installed = WorkBuddyHook.Installed(), path = WorkBuddyHook.SettingsPath }));
+app.MapPost("/api/workbuddy/hook", (ConfigStore cfg) => WorkBuddyHook.Configure(true, Port, cfg.Get().WorkBuddy.TimeoutSec) is { } err ? Results.BadRequest(new { error = err }) : Results.Ok());
+app.MapDelete("/api/workbuddy/hook", (ConfigStore cfg) => WorkBuddyHook.Configure(false, Port, cfg.Get().WorkBuddy.TimeoutSec) is { } err ? Results.BadRequest(new { error = err }) : Results.Ok());
 
 // Permission prompts waiting for the phone (posted by an AI coding agent hook).
 app.MapGet("/api/approvals", (ApprovalStore a) => Results.Json(new { items = a.Snapshot() }));
@@ -949,54 +969,9 @@ app.MapGet("/api/spectrum", (SpectrumAnalyzer spectrum) =>
 app.MapGet("/api/widget/{page}/{widget}", (string page, string widget, bool? force, CommandRunner runner) =>
     runner.Get(page, widget, force == true) is { } r ? Results.Json(r) : Results.NotFound());
 
-app.MapGet("/api/config", (ConfigStore cfg, HttpRequest req, ShortcutIconUploads icons, WallpaperStore wallpaper) =>
+app.MapGet("/api/config", (ConfigStore cfg, HttpRequest req, ShortcutIconUploads icons) =>
     Results.Json(new { version = cfg.Version.ToString(), config = cfg.Get().ToPublic(req.Headers["X-PhoneBox-Device"].ToString(),
-        s => icons.Revision(s.Id) is { } up ? (up, true) : (ShortcutIcons.Revision(s), false), wallpaper.Revision()) }));
-
-// The panel's wallpaper (Settings › Display). The panel asks with ?v=<revision>, so the picture may be kept for good.
-app.MapGet("/api/wallpaper", (WallpaperStore wallpaper, HttpResponse res, string? v) =>
-{
-    if (wallpaper.Read() is not { } found) return Results.NotFound();
-    // kept for good only when these very bytes are the revision asked for (the revision is their hash): an upload
-    // between the config and this request must not leave the new picture cached under the old revision's address
-    res.Headers.CacheControl = v == WallpaperStore.ContentRevision(found.Bytes).ToString(System.Globalization.CultureInfo.InvariantCulture)
-        ? "private, max-age=31536000, immutable" : "no-store";
-    res.Headers.XContentTypeOptions = "nosniff";
-    return Results.File(found.Bytes, found.ContentType);
-});
-// Uploading and removing it: under /api/settings, so local only like the rest of the settings API. The version bump
-// tells connected phones to load the config, and with it the new revision.
-app.MapPost("/api/settings/wallpaper", async (HttpRequest req, ConfigStore cfg, WallpaperStore wallpaper) =>
-{
-    var configVersion = req.Headers["X-Config-Version"].ToString();
-    if (cfg.VersionConflict(configVersion)) return Results.Json(new { error = ConfigStore.Conflict }, statusCode: StatusCodes.Status409Conflict);
-    var bytes = await WallpaperStore.ReadBounded(req.Body);
-    lock (IconCommit)
-    {
-        if (cfg.VersionConflict(configVersion)) return Results.Json(new { error = ConfigStore.Conflict }, statusCode: StatusCodes.Status409Conflict);
-        var before = wallpaper.Revision();
-        if (wallpaper.Save(bytes) is { } err)
-        {
-            // a save that failed halfway can still have changed the picture served: the panels must hear of it
-            if (wallpaper.Revision() == before) return Results.BadRequest(new { error = err });
-            cfg.Touch();
-            return Results.Json(new { error = err, version = cfg.VersionText }, statusCode: StatusCodes.Status409Conflict);
-        }
-        cfg.Touch();
-        return Results.Ok(new { version = cfg.VersionText });
-    }
-});
-app.MapDelete("/api/settings/wallpaper", (HttpRequest req, ConfigStore cfg, WallpaperStore wallpaper) =>
-{
-    lock (IconCommit)
-    {
-        if (cfg.VersionConflict(req.Headers["X-Config-Version"])) return Results.Json(new { error = ConfigStore.Conflict }, statusCode: StatusCodes.Status409Conflict);
-        var error = wallpaper.Remove();
-        cfg.Touch(); // also when a file stayed: the panel must load whatever is there now
-        return error is null ? Results.Ok(new { version = cfg.VersionText })
-            : Results.Json(new { error, version = cfg.VersionText }, statusCode: StatusCodes.Status409Conflict);
-    }
-});
+        s => icons.Revision(s.Id) is { } up ? (up, true) : (ShortcutIcons.Revision(s), false)) }));
 
 // Phones that have talked to this agent, with their settings (Settings › Phones).
 app.MapGet("/api/phones", (ConfigStore cfg) =>
@@ -1136,7 +1111,7 @@ app.Run();
 // Restart requested from the settings page (e.g. Wi-Fi turned on): hand over to a fresh instance.
 single.ReleaseMutex();
 single.Dispose();
-if (AppRestart.Requested && (AppRestart.Executable ?? Environment.ProcessPath) is { } exe)
+if (AppRestart.Requested && Environment.ProcessPath is { } exe)
 {
     if (AppRestart.ServiceManaged(Environment.GetEnvironmentVariable, Environment.ProcessId, AppRestart.ParentName)) Environment.ExitCode = AppRestart.ServiceRestartCode;
     else System.Diagnostics.Process.Start(AppRestart.StartInfo(exe, args));

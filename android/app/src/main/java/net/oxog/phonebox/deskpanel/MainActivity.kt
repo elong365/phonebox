@@ -21,6 +21,7 @@ import android.os.Bundle
 import android.os.Build
 import android.os.VibrationEffect
 import android.os.Vibrator
+import android.speech.tts.TextToSpeech
 import android.text.format.DateFormat
 import android.util.Log
 import android.view.Gravity
@@ -60,6 +61,10 @@ class MainActivity : Activity(), SensorEventListener {
     private lateinit var web: WebView
     /** False when Android could not start its WebView (#385): the activity then only shows why. */
     private val hasWeb get() = ::web.isInitialized
+
+    /** System TTS for spoken task announcements (e.g. "已完成XXX任务"); null when unavailable. */
+    private var tts: TextToSpeech? = null
+    private var ttsReady = false
     private val panelLanguageTag = Regex("auto|[a-z]{2}(-[A-Za-z]{2,4})?")
     private val panelPreferences by lazy { getSharedPreferences("panel-ui", MODE_PRIVATE) }
 
@@ -151,6 +156,14 @@ class MainActivity : Activity(), SensorEventListener {
         web.addJavascriptInterface(Bridge(), "Android")
         // Lets you debug the panel from the computer via chrome://inspect.
         WebView.setWebContentsDebuggingEnabled(BuildConfig.DEBUG)
+
+        // System TTS for task announcements; speaks only through the media stream, quietly.
+        try {
+            tts = TextToSpeech(this) { status ->
+                ttsReady = status == TextToSpeech.SUCCESS
+                if (ttsReady) tts?.language = Locale.SIMPLIFIED_CHINESE
+            }
+        } catch (_: Exception) { tts = null }
 
         web.loadUrl("https://$ASSET_HOST/assets/www/index.html")
         hideSystemUi()
@@ -358,6 +371,7 @@ class MainActivity : Activity(), SensorEventListener {
         stream.stop()
         link.trackpadSocket.close()
         link.close()
+        try { tts?.stop(); tts?.shutdown(); tts = null } catch (_: Exception) {}
         if (hasWeb) {
             (web.parent as? ViewGroup)?.removeView(web) // a WebView must be detached before destroy()
             web.destroy()
@@ -480,6 +494,28 @@ class MainActivity : Activity(), SensorEventListener {
             if (!v.hasVibrator() || timings.isEmpty()) return
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) v.vibrate(VibrationEffect.createWaveform(timings, -1))
             else @Suppress("DEPRECATION") v.vibrate(timings, -1)
+        }
+
+        /** Speak a short announcement through the system TTS (e.g. "已完成，清理日志任务"). */
+        @JavascriptInterface
+        fun speak(key: String, text: String) {
+            if (!ok(key)) return
+            val clean = text.trim().take(120)
+            if (clean.isEmpty()) return
+            runOnUiThread {
+                val engine = tts ?: return@runOnUiThread
+                if (!ttsReady) return@runOnUiThread
+                try {
+                    engine.speak(clean, TextToSpeech.QUEUE_ADD, null, "wb-announce-${System.currentTimeMillis()}")
+                } catch (_: Exception) {}
+            }
+        }
+
+        /** Stop any ongoing speech (called when the alert state changes). */
+        @JavascriptInterface
+        fun speakStop(key: String) {
+            if (!ok(key)) return
+            runOnUiThread { try { tts?.stop() } catch (_: Exception) {} }
         }
 
         @JavascriptInterface
@@ -628,7 +664,7 @@ class MainActivity : Activity(), SensorEventListener {
         private val NO_STORE = mapOf("Cache-Control" to "no-store")
         private const val PANEL_HEADER = "X-PhoneBox-Panel"
         private val READ_ONLY_IMAGES = setOf("/agent/api/art", "/agent/api/procs/icon", "/agent/api/controls/radio-logo", "/agent/api/apps/icon", "/agent/api/discord/img", "/agent/api/shortcuts/icon",
-            "/agent/api/steam/cover", "/agent/api/wallpaper")
+            "/agent/api/steam/cover")
         private fun FORBIDDEN() = WebResourceResponse("text/plain", "utf-8", 403, "Forbidden", NO_STORE, java.io.ByteArrayInputStream(ByteArray(0)))
     }
 }

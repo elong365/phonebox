@@ -1,4 +1,4 @@
-import { $, API, PANEL_HEADERS, ago, api, h, haptic, icon, safeFetch, store, t, tick, toast, tp } from '../main.js';
+import { $, API, LOCALE, PANEL_HEADERS, ago, api, h, haptic, icon, safeFetch, sizeCanvas, store, t, tick, toast, tp } from '../main.js';
 import { W } from '../registry.js';
 import { cached, every, fmtNum, lines, pctSpan, sparkLine } from './helpers.js';
 
@@ -162,6 +162,235 @@ W.crypto = {
           return h('div', 'fx-i', h('b', null, (c.symbol || '').toUpperCase()), h('span', 'fx-v', fmtNum(c.current_price)), pctSpan(c.price_change_percentage_24h ?? 0), cv);
         }));
       } catch (_) { list.replaceChildren(h('div', 'empty', t('w.pricesUnavailable'))); return false; }
+    });
+    return { update: load };
+  },
+};
+
+// Stocks: the watchlist is configured on the computer (Settings › Stocks watchlist);
+// this computer fetches the quotes (qt.gtimg.cn) and answers /agent/stocks.
+// Up = red, down = green (A-share convention).
+// Options: mode "list" (rows) or "chart" (a grid of intraday charts, chartCount per screen).
+W.stocks = {
+  needs: ['tick'],
+  create(box, { o }) {
+    const chartMode = (o.mode || 'list') === 'chart';
+    // ---- chart mode: rows x cols intraday charts on one screen ----
+    if (chartMode) {
+      // "2*4" = 2 rows, 4 columns (8 charts); legacy "chartCount" = total per screen
+      const m = /^\s*(\d+)\s*[*x×]\s*(\d+)\s*$/i.exec(String(o.chartGrid || ''));
+      let rows, cols;
+      if (m) { rows = Math.max(1, +m[1]); cols = Math.max(1, +m[2]); }
+      else {
+        cols = Math.max(1, Math.min(4, Number(o.chartCount) || 2));
+        rows = 1;
+      }
+      const count = rows * cols;
+      const tiles = [];
+      const grid = h('div', 'sc-grid');
+      grid.style.display = 'grid';
+      grid.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
+      grid.style.gridTemplateRows = `repeat(${rows}, 1fr)`;
+      grid.style.gap = '6px';
+      grid.style.height = '100%';
+      grid.style.alignContent = 'stretch';
+      const drawTile = (tile, q) => {
+        const [ctx, w, hh, dpr] = sizeCanvas(tile.canvas);
+        const W2 = w, H2 = hh;
+        ctx.clearRect(0, 0, W2, H2);
+        // frame: the day's open as baseline; prices scale to the data with padding
+        const pts = q.points || [];
+        if (pts.length < 2) {
+          // visible reason instead of a blank tile
+          ctx.fillStyle = '#888';
+          ctx.font = '11px sans-serif';
+          ctx.textAlign = 'center';
+          ctx.fillText(q.err || (pts.length ? '数据不足' : '加载中…'), W2 / 2, H2 / 2);
+          return;
+        }
+        const prices = pts.map((p) => p[1]);
+        const open = prices[0];
+        // prevClose is the 0% baseline; the scale must include it and the last price
+        const prev = q.prevClose > 0 ? q.prevClose : open;
+        const last = prices[prices.length - 1];
+        const lo = Math.min(...prices, prev), hi = Math.max(...prices, prev);
+        const span = (hi - lo) || Math.abs(hi) * 0.001 || 1;
+        const pad = H2 * 0.10;
+        const up = last >= prev;
+        const col = up ? '#ef4444' : '#22c55e';
+        // grid lines (3 horizontal)
+        ctx.strokeStyle = 'rgba(128,128,128,0.18)';
+        ctx.lineWidth = 1;
+        for (let i = 1; i < 3; i++) {
+          const y = pad + ((H2 - pad * 2) * i) / 3;
+          ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W2, y); ctx.stroke();
+        }
+        // 0% baseline (yesterday's close) dashed
+        const oy = pad + (H2 - pad * 2) * (1 - (prev - lo) / span);
+        ctx.setLineDash([3, 3]);
+        ctx.strokeStyle = 'rgba(128,128,128,0.45)';
+        ctx.beginPath(); ctx.moveTo(0, oy); ctx.lineTo(W2, oy); ctx.stroke();
+        ctx.setLineDash([]);
+        // x mapping: by clock time on the market's full-day axis, so a
+        // half-day chart only fills the left part (like 同花顺). Codes:
+        // sh/sz = A-shares (09:15 auction .. 15:30), hk = 09:30..16:00,
+        // anything else falls back to index-based spread.
+        const t0 = String(pts[0][0] || '');
+        let total = 0, elapsed = (i) => i;
+        if (t0.length === 4 && /^\d{4}$/.test(t0)) {
+          const mins = (s) => ((+s.slice(0, 2)) * 60 + (+s.slice(2)));
+          if (/^(sh|sz)/.test(String(q.code || ''))) {
+            const start = mins('0915');               // auction included
+            total = mins('1530') - start;             // to 15:30 after-hours
+            elapsed = (i) => mins(pts[i][0]) - start;
+          } else if (/^hk/.test(String(q.code || ''))) {
+            const start = mins('0930');
+            total = mins('1600') - start;
+            elapsed = (i) => mins(pts[i][0]) - start;
+          }
+        }
+        const n = pts.length;
+        const x = (i) => (total > 0
+          ? (elapsed(i) / total) * W2
+          : (i / (n - 1)) * W2);
+        const y = (p) => pad + (H2 - pad * 2) * (1 - (p - lo) / span);
+        ctx.strokeStyle = col;
+        ctx.lineWidth = Math.max(1.5, dpr > 1 ? 1.5 : 1);
+        ctx.beginPath();
+        pts.forEach(([t, p], i) => {
+          const px = x(i), py = y(p);
+          if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+        });
+        ctx.stroke();
+        // fill between the line and the 0% baseline (prevClose), gradient fading down
+        ctx.lineTo(x(n - 1), y(prev));
+        ctx.lineTo(x(0), y(prev));
+        ctx.closePath();
+        const g = ctx.createLinearGradient(0, pad, 0, H2);
+        const c = up ? '239,68,68' : '34,197,94';
+        g.addColorStop(0, `rgba(${c},0.22)`);
+        g.addColorStop(1, `rgba(${c},0.03)`);
+        ctx.fillStyle = g;
+        ctx.fill();
+        // last price label (top-right; the name lives in the tile header, not here)
+        ctx.fillStyle = col;
+        ctx.font = `${Math.max(10, Math.round(H2 * 0.12))}px sans-serif`;
+        ctx.textAlign = 'right';
+        ctx.fillText(String(Math.round(last * 100) / 100), W2 - 2, pad - 1);
+      };
+      box.append(grid);
+      let lastKey = '';
+      const load = every(60_000, async () => {
+        try {
+          const d = await api('/stocks', 'GET', 6000);
+          const quotes = (d.quotes || []).slice(0, count);
+          if (!quotes.length) { grid.replaceChildren(h('div', 'empty', t('w.ratesUnavailable'))); return false; }
+          // one placeholder per quote, then fill charts as their minutes arrive
+          const key = quotes.map((q) => q.code).join(',');
+          if (key === lastKey) { tiles.forEach((t) => { if (t.q) drawTile(t, t.q); }); return; }
+          lastKey = key;
+          grid.replaceChildren(...quotes.map((q) => {
+            const cell = h('div', 'sc-tile');
+            cell.style.cssText = 'display:flex;flex-direction:column;min-height:0;border:1px solid var(--border,#333);border-radius:8px;overflow:hidden;background:var(--card-bg,transparent)';
+            const head = h('div', 'sc-h');
+            head.style.cssText = 'display:flex;justify-content:space-between;padding:4px 6px 0;font-size:11px;white-space:nowrap;overflow:hidden';
+            const canvas = h('canvas');
+            canvas.style.cssText = 'flex:1;width:100%;height:100%;min-height:0;display:block';
+            head.append(h('b', { style: 'color:inherit;overflow:hidden;text-overflow:ellipsis' }, String(q.name || q.code).slice(0, 4)));
+            const pct = h('span', null, (q.changePct > 0 ? '+' : '') + (q.changePct || 0).toFixed(2) + '%');
+            pct.style.color = q.changePct >= 0 ? '#ef4444' : '#22c55e';
+            head.append(pct);
+            cell.append(head, canvas);
+            const tile = { canvas, q, col: q.changePct >= 0 ? '#ef4444' : '#22c55e' };
+            tiles.push(tile);
+            api('/stocks/minutes?code=' + encodeURIComponent(q.code), 'GET', 8000)
+              .then((m) => {
+                tile.q = { ...q, points: (m.points || []).map(([t, p]) => [t, Number(p)]), prevClose: Number(m.prevClose) || 0 };
+                tile.col = tile.q.points.length && tile.q.points[tile.q.points.length - 1][1] >= (tile.q.prevClose || tile.q.points[0][1]) ? '#ef4444' : '#22c55e';
+                requestAnimationFrame(() => drawTile(tile, tile.q));
+              }).catch((e) => {
+                // show the failure on the tile instead of a silent blank
+                tile.q = { ...q, points: [], err: (e && e.message) || 'fetch fail' };
+                requestAnimationFrame(() => drawTile(tile, tile.q));
+              });
+            return cell;
+          }));
+          // redraw on resize so the charts never stretch
+          const ro = new ResizeObserver(() => { for (const t of tiles) if (t.q) requestAnimationFrame(() => drawTile(t, t.q)); });
+          ro.observe(grid);
+          return;
+        } catch (_) { if (!lastKey) grid.replaceChildren(h('div', 'empty', t('w.offline'))); return false; }
+      });
+      return { update: load };
+    }
+    // ---- list mode ----
+    const list = h('div', 'fx-list', h('div', 'empty', t('w.loading')));
+    box.append(h('div', 'w-title', tp('Stocks'), h('span', 'w-sub', '')), list);
+    let last = '';
+    const load = every(30_000, async () => {
+      try {
+        const d = await api('/stocks', 'GET', 6000);
+        const quotes = d.quotes || [];
+        if (!quotes.length) { list.replaceChildren(h('div', 'empty', t('w.ratesUnavailable'))); return false; }
+        box.querySelector('.w-sub').textContent = d.updated ? new Date(d.updated).toLocaleTimeString(LOCALE, { hour: '2-digit', minute: '2-digit' }) : '';
+        const key = JSON.stringify(quotes.map((q) => [q.code, q.price, q.changePct]));
+        if (key === last) return;
+        last = key;
+        list.replaceChildren(...quotes.map((q) => {
+          // up = red, down = green, flat = dim (A-share colours); the whole row takes the colour
+          const col = q.changePct > 0 ? '#ef4444' : q.changePct < 0 ? '#22c55e' : 'var(--muted)';
+          // grid col 1 is 4em wide: exactly 4 Chinese characters, no wrapping
+          const name = h('b', null, (q.name || q.code).slice(0, 4));
+          const row = h('div', 'fx-i',
+            h('b', { style: `color:${col};white-space:nowrap;overflow:hidden` }, name.textContent),
+            h('span', 'fx-v', fmtNum(q.price)),
+            h('span', { style: `color:${col};font-weight:600;min-width:56px;text-align:right` },
+              (q.changePct > 0 ? '+' : '') + (q.changePct || 0).toFixed(2) + '%'),
+            h('span', 'fx-c', (q.change > 0 ? '+' : '') + (q.change || 0).toFixed(2)));
+          row.style.color = col;
+          return row;
+        }));
+      } catch (_) { if (!last) list.replaceChildren(h('div', 'empty', t('w.offline'))); return false; }
+    });
+    return { update: load };
+  },
+};
+
+// Guba (East Money stock forum): latest 10 posts for the stock configured
+// on the computer; the agent fetches guba.eastmoney.com and answers /agent/guba.
+W.guba = {
+  needs: ['tick'],
+  create(box, { o }) {
+    const code = String(o.code || '002317').replace(/\D/g, '').slice(0, 6) || '002317';
+    const count = Math.max(1, Math.min(15, Number(o.count) || 10));
+    const list = h('div', 'gb-list', h('div', 'empty', t('w.loading')));
+    list.style.cssText = 'flex:1;min-height:0;display:flex;flex-direction:column;justify-content:space-evenly;gap:2px;overflow:hidden';
+    box.append(h('div', 'w-title', 'Forum ' + code, h('span', 'w-sub', '')), list);
+    let last = '';
+    const load = every(300_000, async () => {
+      try {
+        const d = await api('/guba?code=' + code + '&count=' + count, 'GET', 8000);
+        const posts = d.posts || [];
+        if (!posts.length) { list.replaceChildren(h('div', 'empty', t('w.offline'))); return false; }
+        box.querySelector('.w-sub').textContent = d.updated ? new Date(d.updated).toLocaleTimeString(LOCALE, { hour: '2-digit', minute: '2-digit' }) : '';
+        const key = JSON.stringify(posts.map((p) => p.id));
+        if (key === last) return;
+        last = key;
+        list.replaceChildren(...posts.map((p) => {
+          const row = h('div', 'gb-i');
+          row.style.cssText = 'display:flex;flex-direction:column;min-height:0;overflow:hidden';
+          // one summary line: title (whole row clickable in a real browser; here just text)
+          const title = h('div', 'gb-t', String(p.title || '').slice(0, 40));
+          title.style.cssText = 'font-size:12px;line-height:1.25;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
+          const meta = h('div', 'gb-m');
+          meta.style.cssText = 'font-size:10px;color:var(--muted);display:flex;gap:8px';
+          const when = String(p.time || '').slice(5, 16); // "11-23 22:35"
+          meta.append(h('span', null, String(p.author || '').slice(0, 10)), h('span', null, when),
+            h('span', null, '阅' + (p.reads || 0)), h('span', null, '评' + (p.comments || 0)));
+          row.append(title, meta);
+          return row;
+        }));
+      } catch (_) { if (!last) list.replaceChildren(h('div', 'empty', t('w.offline'))); return false; }
     });
     return { update: load };
   },

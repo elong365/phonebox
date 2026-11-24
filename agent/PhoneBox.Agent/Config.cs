@@ -23,6 +23,8 @@ public sealed class AgentConfig
     public CursorConfig Cursor { get; set; } = new();
     /// <summary>Antigravity chats on the AI sessions widget (off by default).</summary>
     public AntigravityConfig Antigravity { get; set; } = new();
+    /// <summary>WorkBuddy sessions and permission prompts.</summary>
+    public WorkBuddyConfig WorkBuddy { get; set; } = new();
     /// <summary>OpenCode prompts and sessions on the phone; everything is off until the settings page turns it on.</summary>
     [JsonPropertyName("opencode")]
     public OpenCodeConfig OpenCode { get; set; } = new();
@@ -50,6 +52,8 @@ public sealed class AgentConfig
     public ConsoleConfig Console { get; set; } = new();
     /// <summary>Steam friends presence (the Web API key stays on this computer and is never sent to the phone).</summary>
     public SteamConfig Steam { get; set; } = new();
+    /// <summary>Watchlist for the Stocks widget: qt.gtimg.cn codes (sh000001, sz399001, sh600519, hk00700, usAAPL…).</summary>
+    public List<string> Stocks { get; set; } = [];
 
     /// <summary>The pages a phone shows: its own selection (Settings › Phones), or all of them.</summary>
     public IEnumerable<PageConfig> PagesFor(string? deviceId)
@@ -60,30 +64,16 @@ public sealed class AgentConfig
         return chosen.Count > 0 ? chosen : Pages;
     }
 
-    /// <summary>The home page a device chose for itself, if that page is enabled and among the ones it shows; null
-    /// otherwise, so a disabled one falls back to the global home page (the panel drops disabled pages before it looks).</summary>
-    public string? HomePageFor(string? deviceId)
-    {
-        var home = Phones.FirstOrDefault(p => p.Id == deviceId)?.HomePage;
-        return home is not null && PagesFor(deviceId).Any(p => p.Id == home && p.Enabled) ? home : null;
-    }
-
     /// <summary>The part sent to the phone: commands (shortcut cmd/args/cwd, command widget scripts) are never included.</summary>
     /// <param name="shortcutIcon">A shortcut's picture: its revision (null when it has none), and whether the user uploaded
     /// it rather than it being the program's own icon; only an upload may fill a Big button (a program icon is small, or on
     /// Linux a theme logo). One lookup gives both, so they always describe the same picture.</param>
-    /// <param name="wallpaperRev">The uploaded wallpaper's revision (null without one): the panel loads the picture
-    /// with it in the URL, so a new upload is fetched and an unchanged one comes from the cache. Sent as text: a 64-bit
-    /// value loses its last digits as a JavaScript number, and two pictures could then share a cached URL.</param>
-    public object ToPublic(string? deviceId = null, Func<Shortcut, (long? Rev, bool Upload)>? shortcutIcon = null, long? wallpaperRev = null) => new
+    public object ToPublic(string? deviceId = null, Func<Shortcut, (long? Rev, bool Upload)>? shortcutIcon = null) => new
     {
         weather = Weather,
         codexBar = CodexBar,
         night = Night,
         display = Display,
-        // this device's own home page (Settings › Phones), when it has one among the pages it shows
-        homePage = HomePageFor(deviceId),
-        wallpaperRev = wallpaperRev?.ToString(System.Globalization.CultureInfo.InvariantCulture),
         pages = PagesFor(deviceId).Select(p => new
         {
             p.Id, p.Title, p.Icon, p.Enabled, p.IdleSec, p.Appearance,
@@ -172,20 +162,9 @@ public sealed class NightConfig
     public double Brightness { get; set; } = 0.02;
 }
 
-/// <summary>The wallpaper's look; the picture itself is <see cref="WallpaperStore"/>'s.</summary>
-public sealed class WallpaperConfig
-{
-    /// <summary>How much the picture is darkened under the widgets, in percent (0–90), so they stay readable.</summary>
-    public int Dim { get; set; } = 45;
-    /// <summary>Blur in pixels (0–20); a little blur keeps a busy picture from competing with the widgets.</summary>
-    public int Blur { get; set; }
-}
-
 public sealed class DisplayConfig
 {
     public AppearanceConfig? Appearance { get; set; }
-    /// <summary>How the uploaded wallpaper (Settings › Display) is drawn behind the pages.</summary>
-    public WallpaperConfig Wallpaper { get; set; } = new();
     /// <summary>UI language code ("auto", "en", "tr", "de", "fr", "es", "it", "pt", "pt-BR", "nl", "pl", "ru", "el", "vi", "zh").</summary>
     public string Language { get; set; } = "auto";
     /// <summary>The codes the panel and the settings page are translated into (i18n.js). Casing matters for pt-BR:
@@ -201,10 +180,6 @@ public sealed class DisplayConfig
     public bool Vibrate { get; set; } = true;
     /// <summary>Show a message when a session finishes. The "needs input" message always shows.</summary>
     public bool FinishToast { get; set; } = true;
-    /// <summary>Play a chime when a session finishes.</summary>
-    public bool FinishSound { get; set; }
-    /// <summary>Sound volume (% of the phone's media volume).</summary>
-    public int FinishSoundVolume { get; set; } = 70;
     /// <summary>The phone's volume keys switch pages.</summary>
     public bool VolumeKeys { get; set; } = true;
     /// <summary>landscape, portrait or auto (follow the phone). In portrait the widgets are arranged automatically.</summary>
@@ -229,7 +204,7 @@ public sealed class DisplayConfig
     public bool PixelShift { get; set; }
     /// <summary>The page dots and the permission prompt's Allow / Deny buttons at the top, for a panel whose bottom edge is hard to reach.</summary>
     public bool ControlsTop { get; set; }
-    /// <summary>How the panel shows its pages: dots, auto (a bar with each page's icon and name while the dots are used), bar (always, with its own strip of the screen) or hidden (no dots: swipe, and hold an empty spot for all pages).</summary>
+    /// <summary>How the panel shows its pages: dots, auto (a bar with each page's icon and name while the dots are used) or bar (always, with its own strip of the screen).</summary>
     public string PageBar { get; set; } = "dots";
     /// <summary>Where the page bar goes: bottom (the top with <see cref="ControlsTop"/>), left or right.</summary>
     public string PageBarSide { get; set; } = "bottom";
@@ -291,18 +266,12 @@ public sealed class ClaudeConfig
     /// <summary>Show each Claude Code chat's title on the phone. The title is the name you gave the chat or the one
     /// Claude Code wrote, which it often draws from your first prompt, so it stays off until you turn it on.</summary>
     public bool ShareSessionTitles { get; set; }
-    /// <summary>Windows: also show the Claude Code sessions (and use the sign-in for the quota, when Windows has none)
-    /// of the running WSL distros' default users. A stopped distro is never started for it (off by default).</summary>
-    public bool WatchWsl { get; set; }
 }
 
 public sealed class CursorConfig
 {
     /// <summary>Show recent Cursor agent chats on the AI sessions widget (off by default).</summary>
     public bool Sessions { get; set; }
-    /// <summary>Windows: also read the agent chats Cursor keeps inside the running WSL distros (projects opened over
-    /// Remote - WSL). A stopped distro is never started for it (off by default).</summary>
-    public bool WatchWsl { get; set; }
 }
 
 public sealed class AntigravityConfig
@@ -311,6 +280,20 @@ public sealed class AntigravityConfig
     public bool Sessions { get; set; }
     /// <summary>Show each Antigravity chat's title from its local annotation file on the phone (off by default).</summary>
     public bool ShareSessionTitles { get; set; }
+}
+
+/// <summary>WorkBuddy: permission prompts reuse the Claude Code hook protocol (its own settings file),
+/// sessions come from ~/.workbuddy/sessions. Like Claude's, the hook is installed from Settings.</summary>
+public sealed class WorkBuddyConfig
+{
+    /// <summary>Show WorkBuddy permission prompts on the phone (uses the same Claude hook endpoint).</summary>
+    public bool PhoneApprovals { get; set; } = true;
+    /// <summary>Show WorkBuddy's live sessions on the AI sessions widget (the same files the tool writes).</summary>
+    public bool Sessions { get; set; } = true;
+    /// <summary>How long the phone may answer before WorkBuddy asks in its own UI.</summary>
+    public int TimeoutSec { get; set; } = 90;
+    /// <summary>Only use the phone when the PC has been idle for a minute.</summary>
+    public bool OnlyWhenAway { get; set; }
 }
 
 public sealed class OpenCodeConfig
@@ -487,8 +470,6 @@ public sealed class PhoneConfig
     public string Name { get; set; } = "";
     /// <summary>Page ids this phone shows, in the usual order; empty or null = all pages.</summary>
     public List<string>? Pages { get; set; }
-    /// <summary>The page this device returns to (idle return, home button); null = the global home page.</summary>
-    public string? HomePage { get; set; }
 }
 
 public sealed class FeedSource
@@ -691,13 +672,10 @@ public sealed partial class ConfigStore(string path)
         c.Display ??= new();
         c.Display.Appearance?.Normalize();
         c.Display.Hour12 = Hour12JsonConverter.Normalize(c.Display.Hour12);
-        c.Display.PageBar = c.Display.PageBar is "dots" or "auto" or "bar" or "hidden" ? c.Display.PageBar : "dots";
+        c.Display.PageBar = c.Display.PageBar is "dots" or "auto" or "bar" ? c.Display.PageBar : "dots";
         c.Display.PageBarSide = c.Display.PageBarSide is "bottom" or "left" or "right" ? c.Display.PageBarSide : "bottom";
         c.Display.IdleReturnSec = Math.Clamp(c.Display.IdleReturnSec, 0, 3600);
         c.Display.IdleDimMin = Math.Clamp(c.Display.IdleDimMin, 0, 1440);
-        c.Display.Wallpaper ??= new();
-        c.Display.Wallpaper.Dim = Math.Clamp(c.Display.Wallpaper.Dim, 0, 90);
-        c.Display.Wallpaper.Blur = Math.Clamp(c.Display.Wallpaper.Blur, 0, 20);
         c.Display.UnreachableNightDelayMin = Math.Clamp(c.Display.UnreachableNightDelayMin, 1, 30);
         // a language the panel does not have falls back to following the phone / browser. Matched case-insensitively
         // so "PT-br" still resolves, but stored in its canonical casing: i18n.js looks pt-BR up by exact code.
@@ -707,7 +685,6 @@ public sealed partial class ConfigStore(string path)
         c.Display.TouchGraceSec = Math.Clamp(c.Display.TouchGraceSec, 0, 600);
         c.Display.MinDwellSec = Math.Clamp(c.Display.MinDwellSec, 0, 600);
         c.Display.HoldMaxMin = Math.Clamp(c.Display.HoldMaxMin, 0, 1440);
-        c.Display.FinishSoundVolume = Math.Clamp(c.Display.FinishSoundVolume, 10, 100);
         c.Lan ??= new();
         c.Updates ??= new();
         c.Ping ??= new();
@@ -792,7 +769,6 @@ public sealed partial class ConfigStore(string path)
             ph.Name = ph.Name?.Trim() ?? "";
             ph.Pages = ph.Pages?.Where(id => !string.IsNullOrWhiteSpace(id)).Select(PageId).Distinct().ToList();
             if (ph.Pages is { Count: 0 }) ph.Pages = null;
-            ph.HomePage = string.IsNullOrWhiteSpace(ph.HomePage) ? null : PageId(ph.HomePage).Trim();
         }
         c.Ping ??= new();
         c.Ping.Adapters = (c.Ping.Adapters ?? []).Where(a => !string.IsNullOrWhiteSpace(a)).Select(a => a.Trim()).Distinct(StringComparer.OrdinalIgnoreCase).Take(16).ToList();
