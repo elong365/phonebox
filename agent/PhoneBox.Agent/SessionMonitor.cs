@@ -62,16 +62,26 @@ public sealed partial class SessionMonitor(ILogger<SessionMonitor> log, ConfigSt
 
     private IReadOnlyList<AgentSession> Shown(IReadOnlyList<AgentSession> all)
     {
-        if (!all.Any(s => s.Title is not null)) return all;
+        var options = config?.Get();
         var claude = ShareTitles;
-        var opencode = config?.Get().OpenCode.ShareSessionTitles ?? false;
-        var antigravity = config?.Get().Antigravity.ShareSessionTitles ?? false;
-        if (claude && opencode && antigravity) return all;
+        var opencode = options?.OpenCode.ShareSessionTitles ?? false;
+        var antigravity = options?.Antigravity.ShareSessionTitles ?? false;
+        var workbuddy = options?.WorkBuddy;
+        var chatdev = options?.ChatDev;
+        all = all.Where(s => s.Tool switch
+        {
+            "workbuddy" => workbuddy?.Sessions == true,
+            "chatdev" => chatdev?.Sessions == true,
+            _ => true,
+        }).ToList();
+        if (!all.Any(s => s.Title is not null)) return all;
         return all.Select(s => s.Tool switch
         {
             "claude" when !claude => s with { Title = null },
             "opencode" when !opencode => s with { Title = null, Name = OpenCodeSessions.ShortId(s.Id["opencode:".Length..]) },
             "antigravity" when !antigravity => s with { Title = null },
+            "workbuddy" when workbuddy?.ShareSessionTitles != true => s with { Title = null },
+            "chatdev" when chatdev?.ShareSessionTitles != true => s with { Title = null },
             _ => s,
         }).ToList();
     }
@@ -91,6 +101,19 @@ public sealed partial class SessionMonitor(ILogger<SessionMonitor> log, ConfigSt
             list.AddRange(extraRows);
             try { list.AddRange(ReadCodex()); } catch (Exception ex) { log.LogDebug("codex sessions: {Msg}", ex.Message); }
             try { list.AddRange(ReadGrok()); } catch (Exception ex) { log.LogDebug("grok sessions: {Msg}", ex.Message); }
+            // WorkBuddy writes the same ~/.<tool>/sessions/{pid}.json shape Claude does; off
+            // until Settings › General › "Show WorkBuddy sessions" is on (like OpenCode/Cursor).
+            // == true: a missing workbuddy section keeps sharing off (opt-in, not opt-out).
+            if (config?.Get().WorkBuddy.Sessions == true)
+            {
+                try { list.AddRange(ReadWorkBuddy(titles: config.Get().WorkBuddy.ShareSessionTitles)); } catch (Exception ex) { log.LogDebug("workbuddy sessions: {Msg}", ex.Message); }
+            }
+            // ChatDev (an Electron agent): its sessions live in ~/.devplat/sessions-v2 and
+            // its chat facts in AppData/Roaming/ChatDev/chat/app.db. Off until enabled.
+            if (config?.Get().ChatDev.Sessions == true)
+            {
+                try { list.AddRange(ReadChatDev(titles: config.Get().ChatDev.ShareSessionTitles)); } catch (Exception ex) { log.LogDebug("chatdev sessions: {Msg}", ex.Message); }
+            }
             // OpenCode sessions are off until Settings › General › "Show OpenCode sessions" is enabled; while off,
             // the service is not read at all — not even the every-2-seconds GET.
             if (config?.Get().OpenCode.Sessions == true)
@@ -213,6 +236,241 @@ public sealed partial class SessionMonitor(ILogger<SessionMonitor> log, ConfigSt
         }
         _wslHomes = homes;
         return _wslSessions = list;
+    }
+
+    /// <summary>
+    /// WorkBuddy's own session files, ~/.workbuddy/sessions/{pid}.json: pid, sessionId, cwd,
+    /// startedAt, updatedAt, lastHeartbeat, kind ("interactive" or "prewarm"). The shape mirrors
+    /// Claude's status files, minus status/waitingFor. Enrichment comes from WorkBuddy's own
+    /// database (workbuddy.db, read-only): each chat's title, model and real status. Prewarm
+    /// pool entries (the IDE's background warmers) are not chats and stay off the phone.
+    /// </summary>
+    internal static IEnumerable<AgentSession> ReadWorkBuddy(string? homeDir = null, Func<int, bool>? isAlive = null, long? nowMs = null,
+        Func<string, Dictionary<string, WbInfo>>? readInfo = null, bool titles = false)
+    {
+        var home = homeDir ?? Home;
+        var aliveCheck = isAlive ?? Alive;
+        var now = nowMs ?? DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var dir = Path.Combine(home, ".workbuddy", "sessions");
+        if (!Directory.Exists(dir)) yield break;
+        var info = (readInfo ?? ReadWorkBuddyInfo)(Path.Combine(home, ".workbuddy", "workbuddy.db"));
+        foreach (var file in Directory.EnumerateFiles(dir, "*.json"))
+        {
+            AgentSession? s = null;
+            try
+            {
+                using var doc = JsonDocument.Parse(File.ReadAllText(file));
+                var r = doc.RootElement;
+                var pid = r.TryGetProperty("pid", out var p) && p.TryGetInt32(out var pi) ? pi : 0;
+                if (pid == 0 || !aliveCheck(pid)) continue;
+                var kind = Str(r, "kind") ?? "interactive";
+                if (kind == "prewarm") continue;
+                var cwd = Str(r, "cwd") ?? "";
+                var project = Path.GetFileName(cwd.TrimEnd('\\', '/'));
+                // WorkBuddy's own display name for the workspace ("Quarterly report"), else the folder
+                var name = WorkBuddyNames.For(cwd, home) ?? project;
+                var sessionId = Str(r, "sessionId") ?? "";
+                info.TryGetValue(sessionId, out var wbi);
+                var title = titles ? wbi?.Title : null;
+                // fresh heartbeat = the chat is alive; the db status refines working vs done
+                var beat = Long(r, "lastHeartbeat") ?? Long(r, "updatedAt") ?? Long(r, "startedAt") ?? 0;
+                var fresh = beat > 0 && now - beat < 90_000;
+                var updated = Long(r, "updatedAt") ?? beat;
+                var status = wbi?.Status switch
+                {
+                    "working" => "busy",
+                    _ => fresh ? "busy" : "idle",
+                };
+                s = new AgentSession(
+                    Id: "workbuddy:" + (sessionId.Length > 0 ? sessionId : pid.ToString()),
+                    Tool: "workbuddy",
+                    Name: name,
+                    Project: project,
+                    Status: status,
+                    WaitingFor: null,
+                    Since: updated > 0 ? updated : beat,
+                    StartedAt: Long(r, "startedAt") ?? 0,
+                    Pid: pid,
+                    Model: wbi?.Model is { Length: > 0 } m ? m.Split(':') is { Length: > 1 } parts ? parts[^1] : m : null,
+                    Title: title);
+            }
+            catch { /* file was being written: retry on the next pass */ }
+            if (s is not null) yield return s;
+        }
+    }
+
+    /// <summary>
+    /// ChatDev's chats: a transcript per session under ~/.devplat/sessions-v2/&lt;id&gt;/session.jsonl
+    /// (Claude's transcript shape), plus the chat's title and model in ChatDev's own
+    /// db (AppData/Roaming/ChatDev/chat/app.db, table session). No pid files and no
+    /// status field: fresh transcript = busy, otherwise idle. Off until Settings
+    /// › General › "Show ChatDev sessions" is on.
+    /// </summary>
+    internal static IEnumerable<AgentSession> ReadChatDev(string? homeDir = null, long? nowMs = null,
+        Func<string, Dictionary<string, CdInfo>>? readInfo = null, bool titles = false)
+    {
+        var home = homeDir ?? Home;
+        var now = nowMs ?? DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var dir = Path.Combine(home, ".devplat", "sessions-v2");
+        if (!Directory.Exists(dir)) yield break;
+        var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+        var info = (readInfo ?? ReadChatDevInfo)(Path.Combine(appData, "ChatDev", "chat", "app.db"));
+        foreach (var sub in Directory.EnumerateDirectories(dir))
+        {
+            var transcript = Path.Combine(sub, "session.jsonl");
+            FileInfo fi;
+            try { fi = new FileInfo(transcript); } catch { continue; }
+            if (!fi.Exists) continue;
+            var sessionId = Path.GetFileName(sub);
+            info.TryGetValue(sessionId, out var cdi);
+            var updated = new DateTimeOffset(fi.LastWriteTimeUtc).ToUnixTimeMilliseconds();
+            var fresh = now - updated < 180_000;
+            // a transcript that is a few minutes old is the current chat only while
+            // ChatDev is open; freshness is the best signal available
+            var title = titles ? cdi?.Title : null;
+            yield return new AgentSession(
+                Id: "chatdev:" + sessionId,
+                Tool: "chatdev",
+                Name: cdi?.Project ?? "ChatDev",
+                Project: "ChatDev",
+                Status: fresh ? "busy" : "idle",
+                WaitingFor: null,
+                Since: updated,
+                StartedAt: new DateTimeOffset(fi.CreationTimeUtc).ToUnixTimeMilliseconds(),
+                Model: cdi?.Model,
+                Title: title);
+        }
+    }
+
+    internal sealed record CdInfo(string? Title, string? Model, string? Project);
+
+    private sealed record CdInfoCache(string Stamp, Dictionary<string, CdInfo> Rows);
+    private static CdInfoCache? _cdInfoCache;
+    private static readonly object CdGate = new();
+
+    /// <summary>ChatDev's chat facts from its db (table session), keyed by session id. Cached by stamp like WorkBuddy's.</summary>
+    internal static Dictionary<string, CdInfo> ReadChatDevInfo(string? dbPath)
+    {
+        if (dbPath is null || !File.Exists(dbPath)) return [];
+        var stamp = DbStamp(dbPath);
+        lock (CdGate)
+        {
+            if (_cdInfoCache is { } c && c.Stamp == stamp) return c.Rows;
+        }
+        var rows = new Dictionary<string, CdInfo>(StringComparer.Ordinal);
+        try
+        {
+            var cs = new Microsoft.Data.Sqlite.SqliteConnectionStringBuilder
+            {
+                DataSource = dbPath ?? "",
+                Mode = Microsoft.Data.Sqlite.SqliteOpenMode.ReadOnly,
+                Pooling = false,
+            }.ToString();
+            using var con = new Microsoft.Data.Sqlite.SqliteConnection(cs);
+            con.Open();
+            using var cmd = con.CreateCommand();
+            cmd.CommandText = "select id, title, metadata from session where time_archived is null";
+            using var reader = cmd.ExecuteReader();
+            while (reader.Read())
+            {
+                var id = reader.IsDBNull(0) ? null : reader.GetString(0);
+                if (string.IsNullOrEmpty(id)) continue;
+                var title = reader.IsDBNull(1) ? null : reader.GetString(1);
+                var meta = reader.IsDBNull(2) ? null : reader.GetString(2);
+                string? model = null, project = null;
+                try
+                {
+                    if (meta is not null)
+                    {
+                        using var doc = System.Text.Json.JsonDocument.Parse(meta);
+                        var r = doc.RootElement;
+                        if (r.TryGetProperty("modelId", out var m) && m.ValueKind == System.Text.Json.JsonValueKind.String)
+                        {
+                            var ms = m.GetString() ?? "";
+                            // "vendor-vendor-glm-5.3-flash" → "glm-5.3-flash":
+                            // drop a repeated vendor token pair from the front
+                            var parts = ms.Split('-');
+                            if (parts.Length >= 4 && parts[0] == parts[1])
+                                model = string.Join('-', parts[2..]);
+                            else
+                                model = ms;
+                        }
+                        if (r.TryGetProperty("owner", out var o) && o.ValueKind == System.Text.Json.JsonValueKind.Object
+                            && o.TryGetProperty("type", out var ot) && ot.GetString() == "project"
+                            && o.TryGetProperty("id", out var oid) && oid.GetString() is { Length: > 0 } pid
+                            && pid != "default")
+                            project = pid;
+                    }
+                }
+                catch (System.Text.Json.JsonException) { }
+                rows[id] = new CdInfo(title, model, project);
+            }
+            _cdInfoCache = new CdInfoCache(stamp, rows);
+        }
+        catch (Microsoft.Data.Sqlite.SqliteException) { /* database unavailable; try again on the next pass */ }
+        return rows;
+    }
+
+    /// <summary>One chat's facts from WorkBuddy's own database: its title and model and the
+    /// tool's own status ("working"/"completed"/…).</summary>
+    internal sealed record WbInfo(string? Title, string? Model, string? Status);
+
+    private sealed record WbInfoCache(string Stamp, Dictionary<string, WbInfo> Rows);
+    private static WbInfoCache? _wbInfoCache;
+    private static string DbStamp(string path)
+    {
+        static string FileStamp(string file)
+        {
+            var info = new FileInfo(file);
+            return info.Exists ? $"{info.LastWriteTimeUtc.Ticks}|{info.Length}" : "-";
+        }
+        return $"{path}|{FileStamp(path)}|{FileStamp(path + "-wal")}";
+    }
+    private static readonly object WbGate = new();
+
+    /// <summary>
+    /// The chat facts of every session in workbuddy.db's sessions table, keyed by session id.
+    /// The db changes constantly, so the read result is cached by the file stamp (mtime+size):
+    /// a changed db re-reads, an unchanged one serves the cache. Read-only mode never fights
+    /// WorkBuddy for the file; a failed read keeps the previous facts on the phone.
+    /// </summary>
+    internal static Dictionary<string, WbInfo> ReadWorkBuddyInfo(string? dbPath)
+    {
+        if (dbPath is null || !File.Exists(dbPath)) return [];
+        var stamp = DbStamp(dbPath);
+        lock (WbGate)
+        {
+            if (_wbInfoCache is { } c && c.Stamp == stamp) return c.Rows;
+        }
+        var rows = new Dictionary<string, WbInfo>(StringComparer.Ordinal);
+        try
+        {
+            var cs = new Microsoft.Data.Sqlite.SqliteConnectionStringBuilder
+            {
+                DataSource = dbPath ?? "",
+
+                Mode = Microsoft.Data.Sqlite.SqliteOpenMode.ReadOnly,
+                Pooling = false,
+            }.ToString();
+            using var con = new Microsoft.Data.Sqlite.SqliteConnection(cs);
+            con.Open();
+            using var cmd = con.CreateCommand();
+            cmd.CommandText = "select id, title, custom_title, model, status from sessions where deleted_at is null";
+            using var reader = cmd.ExecuteReader();
+            while (reader.Read())
+            {
+                var id = reader.IsDBNull(0) ? null : reader.GetString(0);
+                if (string.IsNullOrEmpty(id)) continue;
+                var title = reader.IsDBNull(1) ? null : reader.GetString(1);
+                var custom = reader.IsDBNull(2) ? null : reader.GetString(2);
+                var model = reader.IsDBNull(3) ? null : reader.GetString(3);
+                var status = reader.IsDBNull(4) ? null : reader.GetString(4);
+                rows[id] = new WbInfo(string.IsNullOrWhiteSpace(custom) ? title : custom, model, status);
+            }
+            _wbInfoCache = new WbInfoCache(stamp, rows);
+        }
+        catch (Microsoft.Data.Sqlite.SqliteException) { /* database unavailable; try again on the next pass */ }
+        return rows;
     }
 
     // CodexBar runs `claude` in <Application Support or temp>/CodexBar/ClaudeProbe to read usage.

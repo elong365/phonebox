@@ -57,6 +57,10 @@ public sealed class AgentConfig
     /// <summary>The phone's microphone, played into a virtual audio cable (Windows; off by default).</summary>
     public PhoneMicConfig PhoneMic { get; set; } = new();
 
+    public WorkBuddyConfig WorkBuddy { get; set; } = new();
+    public ChatDevConfig ChatDev { get; set; } = new();
+    public List<string> Stocks { get; set; } = [];
+
     /// <summary>The pages a phone shows: its own selection (Settings › Phones), or all of them.</summary>
     public IEnumerable<PageConfig> PagesFor(string? deviceId)
     {
@@ -392,6 +396,31 @@ public sealed class AntigravityConfig
     /// <summary>Show recent Antigravity chats on the AI sessions widget (off by default).</summary>
     public bool Sessions { get; set; }
     /// <summary>Show each Antigravity chat's title from its local annotation file on the phone (off by default).</summary>
+    public bool ShareSessionTitles { get; set; }
+}
+
+/// <summary>WorkBuddy: permission prompts reuse the Claude Code hook protocol (its own settings file),
+/// sessions come from ~/.workbuddy/sessions. Like Claude's, the hook is installed from Settings.</summary>
+public sealed class WorkBuddyConfig
+{
+    /// <summary>Show WorkBuddy permission prompts on the phone (uses the Claude hook protocol).</summary>
+    public bool PhoneApprovals { get; set; }
+    /// <summary>Show WorkBuddy's live sessions on the AI sessions widget (off by default: sharing
+    /// what you chat about is opt-in, like OpenCode's and Cursor's).</summary>
+    public bool Sessions { get; set; }
+    public bool ShareSessionTitles { get; set; }
+    /// <summary>How long the phone may answer before WorkBuddy asks in its own UI.</summary>
+    public int TimeoutSec { get; set; } = 90;
+    /// <summary>Only use the phone when the PC has been idle for a minute.</summary>
+    public bool OnlyWhenAway { get; set; }
+}
+
+/// <summary>ChatDev: an Electron agent whose chats live in ~/.devplat/sessions-v2 with
+/// chat facts in its own SQLite db. Read-only: no hook system, so no phone approvals.</summary>
+public sealed class ChatDevConfig
+{
+    /// <summary>Show ChatDev's chats on the AI sessions widget (off until turned on).</summary>
+    public bool Sessions { get; set; }
     public bool ShareSessionTitles { get; set; }
 }
 
@@ -827,6 +856,11 @@ public sealed partial class ConfigStore(string path)
             ? Cap(plexToken, 256) : null;
         c.IgnoredDeviceSerials = (c.IgnoredDeviceSerials ?? []).Select(s => s?.Trim())
             .OfType<string>().Where(s => s.Length > 0).Distinct(StringComparer.Ordinal).ToArray();
+        c.Stocks = (c.Stocks ?? []).Select(StockService.NormalizeCode).OfType<string>()
+            .Distinct(StringComparer.Ordinal).Take(20).ToList();
+        c.WorkBuddy ??= new();
+        c.WorkBuddy.TimeoutSec = Math.Clamp(c.WorkBuddy.TimeoutSec, 10, 3600);
+        c.ChatDev ??= new();
         c.Display ??= new();
         c.Display.Appearance?.Normalize();
         c.Display.Hour12 = Hour12JsonConverter.Normalize(c.Display.Hour12);

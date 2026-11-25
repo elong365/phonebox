@@ -45,6 +45,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="11.0.0" />
     <!-- QR codes for pairing a phone over Wi-Fi (settings page) -->
     <PackageReference Include="QRCoder" Version="1.9.0" />
   </ItemGroup>

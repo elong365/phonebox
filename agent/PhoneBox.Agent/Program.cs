@@ -101,6 +101,7 @@ AddMonitor<DiscordMonitor>(builder.Services);
 AddMonitor<SteamMonitor>(builder.Services);
 builder.Services.AddSingleton<SteamLibrary>();
 builder.Services.AddSingleton(sp => new LyricsService(sp.GetRequiredService<ConfigStore>(), sp.GetRequiredService<ILogger<LyricsService>>()));
+builder.Services.AddSingleton<StockService>();
 AddMonitor<BatteryMonitor>(builder.Services);
 AddMonitor<RuleEngine>(builder.Services);
 AddMonitor<ChargeGuard>(builder.Services);
@@ -539,6 +540,33 @@ app.MapGet("/api/info", (AdbReverse adb, ConfigStore cfg) => Results.Json(new
     usbProblem = adb.UsbProblem,
     webviewProblem = WebViewDoctor.DiagnoseRecent(PhoneRegistry.All(), DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()),
 }));
+
+// Quotes for the Stocks widget: the watchlist comes from Config.Stocks.
+app.MapGet("/api/stocks", (StockService stocks, ConfigStore cfg) =>
+{
+    if (!cfg.Get().Widgets(enabledPagesOnly: true).Any(w => w.Type == "stocks")) return Results.NotFound();
+    var (quotes, updated, error) = stocks.Snapshot();
+    return Results.Json(new { quotes, updated, error });
+});
+// Intraday minute prices for one symbol (the Stocks widget's chart mode).
+app.MapGet("/api/stocks/minutes", async (StockService stocks, ConfigStore cfg, string? code) =>
+{
+    if (!cfg.Get().Widgets(enabledPagesOnly: true).Any(w => w.Type == "stocks" && w.Str("mode") == "chart")) return Results.NotFound();
+    var (points, prev, date, updated, error) = await stocks.MinutesAsync(code ?? "");
+    return points is null
+        ? Results.Json(new { error = error ?? "no data" }, statusCode: 404)
+        : Results.Json(new { points, prevClose = prev, date, updated, error });
+});
+// Guba (East Money stock forum) latest posts for one stock code, e.g. "002317".
+app.MapGet("/api/guba", async (ConfigStore cfg, string? code, int? count) =>
+{
+    if (code is null || !cfg.Get().Widgets(enabledPagesOnly: true).Any(w => w.Type == "guba"
+        && (w.Str("code") ?? "002317").Trim() == code)) return Results.NotFound();
+    var (posts, updated, error) = await GubaFeed.LatestAsync(code, count ?? 10);
+    return posts is null
+        ? Results.Json(new { error = error ?? "no data" }, statusCode: 404)
+        : Results.Json(new { posts, updated, error });
+});
 
 // Phone mic status for the settings page and scripts (local port only: not a phone path, see Lan.AllowedOverLan).
 app.MapGet("/api/phone-mic", (PhoneMic mic) => Results.Json(new { mic = mic.Snapshot() }));
@@ -995,6 +1023,20 @@ app.MapPost(CursorHook.Endpoint, async (HttpRequest req, ConfigStore cfg, Approv
 app.MapGet("/api/cursor/hook", (ConfigStore cfg) => Results.Json(CursorHook.Status(cfg.Get().Cursor.WatchWsl)));
 app.MapPost("/api/cursor/hook", (ConfigStore cfg) => CursorHook.ConfigureAll(true, Port, cfg.Get().Claude.TimeoutSec, cfg.Get().Cursor.WatchWsl) is { } err ? Results.BadRequest(new { error = err }) : Results.Ok());
 app.MapDelete("/api/cursor/hook", (ConfigStore cfg) => CursorHook.ConfigureAll(false, Port, cfg.Get().Claude.TimeoutSec, cfg.Get().Cursor.WatchWsl) is { } err ? Results.BadRequest(new { error = err }) : Results.Ok());
+
+// WorkBuddy answers the same Claude-protocol PermissionRequest hook; its settings file is ~/.workbuddy/settings.json
+// and the endpoint is its own one, so WorkBuddy's prompts follow WorkBuddy's switches, not Claude's.
+app.MapPost(WorkBuddyHook.Endpoint, async (HttpRequest req, ConfigStore cfg, ApprovalStore approvals, SessionMonitor sessions) =>
+{
+    JsonElement input;
+    try { using var doc = await JsonDocument.ParseAsync(req.Body, cancellationToken: req.HttpContext.RequestAborted); input = doc.RootElement.Clone(); }
+    catch (JsonException) { return Results.Text(""); }
+    var output = await ClaudeHook.HandleWorkBuddyAsync(input, cfg, approvals, sessions, req.HttpContext.RequestAborted);
+    return output is null ? Results.Text("") : Results.Json(output);
+});
+app.MapGet("/api/workbuddy/hook", () => Results.Json(new { installed = WorkBuddyHook.Installed(), path = WorkBuddyHook.SettingsPath }));
+app.MapPost("/api/workbuddy/hook", (ConfigStore cfg) => WorkBuddyHook.Configure(true, Port, cfg.Get().WorkBuddy.TimeoutSec) is { } err ? Results.BadRequest(new { error = err }) : Results.Ok());
+app.MapDelete("/api/workbuddy/hook", (ConfigStore cfg) => WorkBuddyHook.Configure(false, Port, cfg.Get().WorkBuddy.TimeoutSec) is { } err ? Results.BadRequest(new { error = err }) : Results.Ok());
 
 // Permission prompts waiting for the phone (posted by an AI coding agent hook).
 app.MapGet("/api/approvals", (ApprovalStore a) => Results.Json(new { items = a.Snapshot() }));
