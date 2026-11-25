@@ -82,6 +82,12 @@ public sealed partial class SessionMonitor(ILogger<SessionMonitor> log, ConfigSt
             {
                 try { list.AddRange(ReadWorkBuddy()); } catch (Exception ex) { log.LogDebug("workbuddy sessions: {Msg}", ex.Message); }
             }
+            // ChatDev (an Electron agent): its sessions live in ~/.devplat/sessions-v2 and
+            // its chat facts in AppData/Roaming/ChatDev/chat/app.db. Off until enabled.
+            if (config?.Get().ChatDev.Sessions == true)
+            {
+                try { list.AddRange(ReadChatDev()); } catch (Exception ex) { log.LogDebug("chatdev sessions: {Msg}", ex.Message); }
+            }
             // OpenCode sessions are off until Settings › General › "Show OpenCode sessions" is enabled; while off,
             // the service is not read at all — not even the every-2-seconds GET.
             if (config?.Get().OpenCode.Sessions == true)
@@ -223,6 +229,118 @@ public sealed partial class SessionMonitor(ILogger<SessionMonitor> log, ConfigSt
             catch { /* file was being written: retry on the next pass */ }
             if (s is not null) yield return s;
         }
+    }
+
+    /// <summary>
+    /// ChatDev's chats: a transcript per session under ~/.devplat/sessions-v2/&lt;id&gt;/session.jsonl
+    /// (Claude's transcript shape), plus the chat's title and model in ChatDev's own
+    /// db (AppData/Roaming/ChatDev/chat/app.db, table session). No pid files and no
+    /// status field: fresh transcript = busy, otherwise idle. Off until Settings
+    /// › General › "Show ChatDev sessions" is on.
+    /// </summary>
+    internal static IEnumerable<AgentSession> ReadChatDev(string? homeDir = null, long? nowMs = null,
+        Func<string, Dictionary<string, CdInfo>>? readInfo = null)
+    {
+        var home = homeDir ?? Home;
+        var now = nowMs ?? DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var dir = Path.Combine(home, ".devplat", "sessions-v2");
+        if (!Directory.Exists(dir)) yield break;
+        var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+        var info = (readInfo ?? ReadChatDevInfo)(Path.Combine(appData, "ChatDev", "chat", "app.db"));
+        foreach (var sub in Directory.EnumerateDirectories(dir))
+        {
+            var transcript = Path.Combine(sub, "session.jsonl");
+            FileInfo fi;
+            try { fi = new FileInfo(transcript); } catch { continue; }
+            if (!fi.Exists) continue;
+            var sessionId = Path.GetFileName(sub);
+            info.TryGetValue(sessionId, out var cdi);
+            var fresh = fi.LastWriteTimeUtc.Ticks >= DateTimeOffset.UtcNow.AddMinutes(-3).UtcTicks;
+            var updated = new DateTimeOffset(fi.LastWriteTimeUtc).ToUnixTimeMilliseconds();
+            // a transcript that is a few minutes old is the current chat only while
+            // ChatDev is open; freshness is the best signal available
+            var title = cdi?.Title;
+            yield return new AgentSession(
+                Id: "chatdev:" + sessionId,
+                Tool: "chatdev",
+                Name: cdi?.Project ?? "ChatDev",
+                Project: "ChatDev",
+                Status: fresh ? "busy" : "idle",
+                WaitingFor: null,
+                Since: updated,
+                StartedAt: new DateTimeOffset(fi.CreationTimeUtc).ToUnixTimeMilliseconds(),
+                Model: cdi?.Model,
+                Title: title);
+        }
+    }
+
+    internal sealed record CdInfo(string? Title, string? Model, string? Project);
+
+    private sealed record CdInfoCache(string Stamp, Dictionary<string, CdInfo> Rows);
+    private static CdInfoCache? _cdInfoCache;
+    private static readonly object CdGate = new();
+
+    /// <summary>ChatDev's chat facts from its db (table session), keyed by session id. Cached by stamp like WorkBuddy's.</summary>
+    internal static Dictionary<string, CdInfo> ReadChatDevInfo(string? dbPath)
+    {
+        var info = dbPath is null ? null : new FileInfo(dbPath);
+        var stamp = info is { Exists: true } fi ? fi.LastWriteTimeUtc.Ticks + "|" + fi.Length : "-";
+        if (stamp == "-") return [];
+        lock (CdGate)
+        {
+            if (_cdInfoCache is { } c && c.Stamp == stamp) return c.Rows;
+        }
+        var rows = new Dictionary<string, CdInfo>(StringComparer.Ordinal);
+        try
+        {
+            var cs = new Microsoft.Data.Sqlite.SqliteConnectionStringBuilder
+            {
+                DataSource = dbPath ?? "",
+                Mode = Microsoft.Data.Sqlite.SqliteOpenMode.ReadWrite, // WAL: read-only cannot make the -shm file
+            }.ToString();
+            using var con = new Microsoft.Data.Sqlite.SqliteConnection(cs);
+            con.Open();
+            using var cmd = con.CreateCommand();
+            cmd.CommandText = "select id, title, metadata from session where time_archived is null";
+            using var reader = cmd.ExecuteReader();
+            while (reader.Read())
+            {
+                var id = reader.IsDBNull(0) ? null : reader.GetString(0);
+                if (string.IsNullOrEmpty(id)) continue;
+                var title = reader.IsDBNull(1) ? null : reader.GetString(1);
+                var meta = reader.IsDBNull(2) ? null : reader.GetString(2);
+                string? model = null, project = null;
+                try
+                {
+                    if (meta is not null)
+                    {
+                        using var doc = System.Text.Json.JsonDocument.Parse(meta);
+                        var r = doc.RootElement;
+                        if (r.TryGetProperty("modelId", out var m) && m.ValueKind == System.Text.Json.JsonValueKind.String)
+                        {
+                            var ms = m.GetString() ?? "";
+                            // "vendor-vendor-glm-5.3-flash" → "glm-5.3-flash":
+                            // drop a repeated vendor token pair from the front
+                            var parts = ms.Split('-');
+                            if (parts.Length >= 4 && parts[0] == parts[1])
+                                model = string.Join('-', parts[2..]);
+                            else
+                                model = ms;
+                        }
+                        if (r.TryGetProperty("owner", out var o) && o.ValueKind == System.Text.Json.JsonValueKind.Object
+                            && o.TryGetProperty("type", out var ot) && ot.GetString() == "project"
+                            && o.TryGetProperty("id", out var oid) && oid.GetString() is { Length: > 0 } pid
+                            && pid != "default")
+                            project = pid;
+                    }
+                }
+                catch (System.Text.Json.JsonException) { }
+                rows[id] = new CdInfo(title, model, project);
+            }
+            _cdInfoCache = new CdInfoCache(stamp, rows);
+        }
+        catch (Exception ex) { WbLastError = "chatdev db: " + ex.GetType().Name; }
+        return rows;
     }
 
     /// <summary>One chat's facts from WorkBuddy's own database: its title and model and the
