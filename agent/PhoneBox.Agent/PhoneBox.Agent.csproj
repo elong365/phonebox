@@ -15,6 +15,8 @@
     <Description>PhoneBox desktop agent: feeds the PhoneBox Android desk panel over USB or Wi-Fi.</Description>
     <Version>0.9.29</Version>
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <!-- SQLite's native library must travel inside the same executable as the agent for all single-file installers. -->
+    <IncludeNativeLibrariesForSelfExtract Condition="'$(PublishSingleFile)' == 'true'">true</IncludeNativeLibrariesForSelfExtract>
   </PropertyGroup>
 
   <PropertyGroup Condition="$(TargetFramework.Contains('-windows'))">
