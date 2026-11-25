@@ -19,6 +19,10 @@ public static class ClaudeHook
     public static async Task<object?> HandleAsync(JsonElement input, ConfigStore cfg, ApprovalStore approvals, SessionMonitor sessions, CancellationToken aborted)
         => await HandlePermissionAsync(input, cfg, approvals, sessions, aborted, "Claude Code", "claude:", allowQuestions: true);
 
+    /// <summary>Handles one WorkBuddy hook call: WorkBuddy's own switches gate it, not Claude's.</summary>
+    public static async Task<object?> HandleWorkBuddyAsync(JsonElement input, ConfigStore cfg, ApprovalStore approvals, SessionMonitor sessions, CancellationToken aborted)
+        => await HandlePermissionAsync(input, cfg, approvals, sessions, aborted, "WorkBuddy", "workbuddy:", allowQuestions: true, workbuddy: true);
+
     /// <summary>Shared PermissionRequest protocol used by Claude Code, Codex, WorkBuddy and compatible agents.
     /// <paramref name="workbuddy"/> picks WorkBuddy's own switches (its settings, not Claude's).</summary>
     internal static async Task<object?> HandlePermissionAsync(JsonElement input, ConfigStore cfg, ApprovalStore approvals,

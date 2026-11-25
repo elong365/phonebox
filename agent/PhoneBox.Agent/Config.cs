@@ -25,6 +25,8 @@ public sealed class AgentConfig
     public AntigravityConfig Antigravity { get; set; } = new();
     /// <summary>WorkBuddy sessions and permission prompts.</summary>
     public WorkBuddyConfig WorkBuddy { get; set; } = new();
+    /// <summary>ChatDev chats on the AI sessions widget (off until enabled).</summary>
+    public ChatDevConfig ChatDev { get; set; } = new();
     /// <summary>OpenCode prompts and sessions on the phone; everything is off until the settings page turns it on.</summary>
     [JsonPropertyName("opencode")]
     public OpenCodeConfig OpenCode { get; set; } = new();
@@ -288,12 +290,21 @@ public sealed class WorkBuddyConfig
 {
     /// <summary>Show WorkBuddy permission prompts on the phone (uses the same Claude hook endpoint).</summary>
     public bool PhoneApprovals { get; set; } = true;
-    /// <summary>Show WorkBuddy's live sessions on the AI sessions widget (the same files the tool writes).</summary>
-    public bool Sessions { get; set; } = true;
+    /// <summary>Show WorkBuddy's live sessions on the AI sessions widget (off by default: sharing
+    /// what you chat about is opt-in, like OpenCode's and Cursor's).</summary>
+    public bool Sessions { get; set; }
     /// <summary>How long the phone may answer before WorkBuddy asks in its own UI.</summary>
     public int TimeoutSec { get; set; } = 90;
     /// <summary>Only use the phone when the PC has been idle for a minute.</summary>
     public bool OnlyWhenAway { get; set; }
+}
+
+/// <summary>ChatDev: an Electron agent whose chats live in ~/.devplat/sessions-v2 with
+/// chat facts in its own SQLite db. Read-only: no hook system, so no phone approvals.</summary>
+public sealed class ChatDevConfig
+{
+    /// <summary>Show ChatDev's chats on the AI sessions widget (off until turned on).</summary>
+    public bool Sessions { get; set; }
 }
 
 public sealed class OpenCodeConfig

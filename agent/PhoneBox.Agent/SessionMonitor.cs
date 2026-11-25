@@ -78,7 +78,8 @@ public sealed partial class SessionMonitor(ILogger<SessionMonitor> log, ConfigSt
             try { list.AddRange(ReadCodex()); } catch (Exception ex) { log.LogDebug("codex sessions: {Msg}", ex.Message); }
             // WorkBuddy writes the same ~/.<tool>/sessions/{pid}.json shape Claude does; off
             // until Settings › General › "Show WorkBuddy sessions" is on (like OpenCode/Cursor).
-            if (config?.Get().WorkBuddy.Sessions is null or true)
+            // == true: a missing workbuddy section keeps sharing off (opt-in, not opt-out).
+            if (config?.Get().WorkBuddy.Sessions == true)
             {
                 try { list.AddRange(ReadWorkBuddy()); } catch (Exception ex) { log.LogDebug("workbuddy sessions: {Msg}", ex.Message); }
             }

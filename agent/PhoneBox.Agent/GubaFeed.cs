@@ -14,7 +14,8 @@ public static partial class GubaFeed
 
     private static readonly object Gate = new();
     private static string _code = "";
-    private static long _at;
+    private static long _at;          // the last attempt (success or failure): it paces the retries
+    private static long _okAt;        // the last success: it paces the cache
     private static List<object>? _cache;
     private static string? _error;
 
@@ -47,29 +48,38 @@ public static partial class GubaFeed
         lock (Gate)
         {
             var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-            if (_code == code && now - _at < (CacheMs * (_cache is null ? 0 : 1) + (_cache is null ? RetryMs : 0)) && (_cache is not null || now - _at < RetryMs))
+            // A fresh cache serves within CacheMs of the last success. After a failure
+            // (cache or not) nothing is fetched again before RetryMs has passed since
+            // the last attempt — the widget's 60-second load loop must not hammer
+            // East Money, which rate-limits hard.
+            if (_code == code && now - _okAt < CacheMs)
             {
-                // recent success or recent failure: don't hammer the feed
-                if (_cache is not null) return (_cache.Take(count).ToList(), _at, null);
+                if (_cache is not null) return (_cache.Take(count).ToList(), _okAt, null);
+            }
+            if (_code == code && now - _at < RetryMs)
+            {
+                // within the back-off window: serve the cache if there is one, otherwise the error
+                if (_cache is not null && _code == code) return (_cache.Take(count).ToList(), _okAt, "stale");
                 return (null, 0, _error);
             }
+            _at = now;   // the attempt itself paces the next one, success or failure
             try
             {
                 var posts = TryFetchPage(code) ?? TryFetchApi(code);
                 if (posts is null)
                 {
                     // rate-limited: fall back to the last good list, mark it stale
-                    if (_cache is not null && _code == code) return (_cache.Take(count).ToList(), _at, "stale");
                     _error = "fetch failed (rate-limited?)";
+                    if (_cache is not null && _code == code) return (_cache.Take(count).ToList(), _okAt, "stale");
                     return (null, 0, _error);
                 }
-                _code = code; _cache = posts; _at = now; _error = null;
+                _code = code; _cache = posts; _at = now; _okAt = now; _error = null;
                 return (posts.Take(count).ToList(), now, null);
             }
             catch (Exception ex)
             {
                 _error = "fetch failed: " + ex.GetType().Name + ": " + ex.Message;
-                if (_cache is not null && _code == code) return (_cache.Take(count).ToList(), _at, "stale");
+                if (_cache is not null && _code == code) return (_cache.Take(count).ToList(), _okAt, "stale");
                 return (null, 0, _error);
             }
         }

@@ -287,7 +287,18 @@ W.stocks = {
           if (!quotes.length) { grid.replaceChildren(h('div', 'empty', t('w.ratesUnavailable'))); return false; }
           // one placeholder per quote, then fill charts as their minutes arrive
           const key = quotes.map((q) => q.code).join(',');
-          if (key === lastKey) { tiles.forEach((t) => { if (t.q) drawTile(t, t.q); }); return; }
+          if (key === lastKey) {
+            // same codes: only the header percentages change; the minute series is refreshed
+            // below on its own pace (a trading day's chart must not freeze at its first snapshot)
+            quotes.forEach((q, i) => {
+              const t = tiles[i];
+              if (!t || !t.q) return;
+              t.q = { ...t.q, ...q };
+              t.col = (q.changePct || 0) >= 0 ? '#ef4444' : '#22c55e';
+            });
+            refreshMinutes();
+            return;
+          }
           lastKey = key;
           grid.replaceChildren(...quotes.map((q) => {
             const cell = h('div', 'sc-tile');
@@ -303,24 +314,36 @@ W.stocks = {
             cell.append(head, canvas);
             const tile = { canvas, q, col: q.changePct >= 0 ? '#ef4444' : '#22c55e' };
             tiles.push(tile);
-            api('/stocks/minutes?code=' + encodeURIComponent(q.code), 'GET', 8000)
-              .then((m) => {
-                tile.q = { ...q, points: (m.points || []).map(([t, p]) => [t, Number(p)]), prevClose: Number(m.prevClose) || 0 };
-                tile.col = tile.q.points.length && tile.q.points[tile.q.points.length - 1][1] >= (tile.q.prevClose || tile.q.points[0][1]) ? '#ef4444' : '#22c55e';
-                requestAnimationFrame(() => drawTile(tile, tile.q));
-              }).catch((e) => {
-                // show the failure on the tile instead of a silent blank
-                tile.q = { ...q, points: [], err: (e && e.message) || 'fetch fail' };
-                requestAnimationFrame(() => drawTile(tile, tile.q));
-              });
             return cell;
           }));
+          loadMinutes();
           // redraw on resize so the charts never stretch
           const ro = new ResizeObserver(() => { for (const t of tiles) if (t.q) requestAnimationFrame(() => drawTile(t, t.q)); });
           ro.observe(grid);
           return;
         } catch (_) { if (!lastKey) grid.replaceChildren(h('div', 'empty', t('w.offline'))); return false; }
       });
+      // refetch the minute series of every tile; a tile keeps its old chart while a fetch runs,
+      // and a failed tile is retried on the next tick (its error text is only for now)
+      const loadMinutes = () => {
+        for (const t of tiles) {
+          const code = t.q?.code;
+          if (!code) continue;
+          api('/stocks/minutes?code=' + encodeURIComponent(code), 'GET', 8000)
+            .then((m) => {
+              t.q = { ...t.q, points: (m.points || []).map(([t, p]) => [t, Number(p)]), prevClose: Number(m.prevClose) || 0 };
+              t.col = t.q.points.length && t.q.points[t.q.points.length - 1][1] >= (t.q.prevClose || t.q.points[0][1]) ? '#ef4444' : '#22c55e';
+              requestAnimationFrame(() => drawTile(t, t.q));
+            }).catch((e) => {
+              // show the failure on the tile instead of a silent blank (until the next tick retries)
+              if (!t.q || !t.q.points.length) { t.q = { ...t.q, points: [], err: (e && e.message) || 'fetch fail' }; }
+              requestAnimationFrame(() => drawTile(t, t.q));
+            });
+        }
+      };
+      // once a minute, refetch minutes for tiles that lack fresh data too (a failed tile retries;
+      // tiles whose points exist are refreshed by the same call — one request per tile per minute)
+      const refreshMinutes = () => loadMinutes();
       return { update: load };
     }
     // ---- list mode ----
