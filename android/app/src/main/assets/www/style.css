@@ -499,6 +499,20 @@ body.offline .offline-msg { display: flex; }
 .g-sub { font-size: clamp(9px, 5.4cqh, 12px); color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; text-align: center; }
 @container (max-height: 120px) { .w-gauge .g-sub { display: none; } .w-gauge .g-dial { height: 72cqh; } }
 
+.w-water-intake { padding: 9px 12px; display: grid; align-content: start; gap: 4px; }
+.water-total { font-size: clamp(12px, 10cqh, 24px); font-variant-numeric: tabular-nums; }
+.water-remaining { color: var(--muted); font-size: 11px; }
+.water-progress { width: 100%; height: 8px; accent-color: #38bdf8; }
+.water-quick, .water-form { display: flex; gap: 4px; min-width: 0; }
+.water-form > * { flex: 1; }
+.water-custom { width: 0; min-width: 36px; min-height: 26px; border: 1px solid var(--border);
+  border-radius: 6px; padding-inline: 5px; color: inherit; background: var(--card-bg, transparent); }
+.w-water-intake .chip-btn { min-height: 26px; line-height: 1; margin: 0; padding: 3px 5px; }
+@container (max-height: 115px) {
+  .w-water-intake { padding: 5px 7px; gap: 2px; }
+  .w-water-intake .chip-btn, .water-custom { min-height: 20px; }
+}
+
 /* ---------- chart & meters ---------- */
 .w-chart, .w-meters { padding: 9px 12px 0; display: flex; flex-direction: column; }
 .w-meters { padding-bottom: 10px; }
@@ -513,6 +527,7 @@ body.offline .offline-msg { display: flex; }
 .chips { margin-inline-start: auto; display: flex; gap: 5px; flex-wrap: wrap; justify-content: flex-end; overflow: hidden; }
 .chip { font-size: 11px; padding: 3px 7px; border-radius: 8px; background: rgba(255, 255, 255, .06); color: #cdd5df; white-space: nowrap; }
 .w-chart canvas { flex: 1; width: calc(100% + 24px); margin: 4px -12px 0; min-height: 0; }
+.chart-missing { margin-block: 2px 5px; color: var(--muted); font-size: 10px; overflow-wrap: anywhere; }
 .meters { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; flex: 1; justify-content: space-evenly; min-height: 0; }
 .m-row { display: flex; justify-content: space-between; font-size: 11.5px; color: var(--muted); margin-bottom: 3px; }
 .m-row span:last-child { color: #d5dce5; }

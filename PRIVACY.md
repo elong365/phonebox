@@ -112,6 +112,9 @@ paired panel can see session IDs, workspace names, model names and activity timi
 controls whether chat titles also reach the panel. WorkBuddy permission prompts use a separate opt-in switch and
 use the same on-device approval channel as Claude Code.
 
+The Water intake widget stores the current local day's total and the next reminder in panel storage on that device.
+It sends no intake data to the desktop agent or an external service.
+
 ## Connections made by default
 
 Each of these servers sees your IP address, like any web request. PhoneBox sends none of them an identifier for you

@@ -533,6 +533,11 @@ nav a.on::before { color: var(--accent); }
             </div>
             <div class="canvas-wrap"><div class="phone"><div class="canvas" id="canvas"></div><div class="preview" id="previewBox" hidden></div></div></div>
           </div>
+          <p id="lhmHelp" class="hint" hidden>
+            <a href="https://github.com/LibreHardwareMonitor/LibreHardwareMonitor/releases" target="_blank" rel="noopener">LibreHardwareMonitor</a>
+            <strong id="lhmStatus" role="status"></strong>
+            <span data-i18n="s.lhm.setup">For CPU temperature, CPU power and additional GPU readings on Windows, enable Options › Remote Web Server › Run on port 8085.</span>
+          </p>
           <div id="peRest"></div>
         </div>
       </div>
@@ -3988,6 +3993,13 @@ async function loadInfo() {
     pill.className = 'pill' + (i.connected ? ' on' : '');
     pill.querySelector('span').textContent = i.connected ? t('s.conn.connected') + (i.via ? ' · ' + i.via : '') : t('s.conn.notConnected');
     osName = i.os || 'windows';
+    $('lhmHelp').hidden = osName !== 'windows';
+    const lhm = i.sensors?.lhm;
+    const lhmStatus = $('lhmStatus');
+    const lhmKey = lhm === 'connected' ? 's.lhm.connected' : lhm === 'unavailable' ? 's.lhm.unavailable' : 's.lhm.checking';
+    const lhmText = t(lhmKey);
+    lhmStatus.dataset.i18n = lhmKey;
+    if (lhmStatus.textContent !== lhmText) lhmStatus.textContent = lhmText;
     if ($('phoneMicCard')) { $('phoneMicCard').hidden = osName !== 'windows'; if (osName === 'windows') renderPhoneMicState(); }
     $('followComputerLockOption').style.display = osName === 'macos' ? '' : 'none';
     $('adbFound').textContent = i.adb ? t('s.conn.adbFound', { path: i.adb }) : t('s.conn.adbNotFound') + ' — ' + ({ linux: 'sudo apt install adb', macos: 'brew install android-platform-tools' }[osName] || 'winget install Google.PlatformTools');
