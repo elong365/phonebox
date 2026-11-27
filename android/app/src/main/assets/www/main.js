@@ -1501,6 +1501,9 @@ function startAlwaysCountdown(seconds) {
     left -= 1;
     if (left > 0 && approvalShown === id) { b.textContent = `${t('panel.allowAlways')} · ${left}`; return; }
     stopAlwaysCountdown();
+    // an expired card stays locked: the card's own countdown has locked the
+    // decisions, and this one must not re-enable its button after that
+    if (approvals[0] && approvals[0].expiresAt <= Date.now()) return;
     if (approvalShown === id && approvals[0] && approvals[0].id === id && !submitting.has(id)) {
       b.disabled = false;
       b.textContent = t('panel.allowAlways');
@@ -1594,7 +1597,9 @@ export async function decide(decision, value, label) {
   // The typed draft is cleared only while this card is still the one on screen: a late success (the post landed
   // after the user had moved on) must not wipe the next question's draft. A card change clears it in renderApproval.
   if (decision === 'answer' && approvals[0] && approvals[0].id === a.id) $('apCustomText').value = '';
-  clearConfirmAllow();
+  // the armed confirm belongs to the card on screen too: a late success must not cancel
+  // the next card's timer and leave it armed with no way to fire
+  if (approvalShown === a.id) clearConfirmAllow();
   answered.add(a.id);
   if (answered.size > answeredCap) answered.delete(answered.values().next().value);
   approvals = approvals.filter((x) => x.id !== a.id);
