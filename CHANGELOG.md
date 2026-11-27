@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+**Agent**
+- **Approvals**: the card counts down the seconds left to answer, locks its buttons the moment
+  the time is out, expands the full command detail on demand, and asks for a second tap before
+  allowing a high-risk write (decided by the agent, never widened on the phone).
+
 ## 0.9.31 — 2026-11-27
 
 - Pages: a dimmed **photo background** per page, from the Photo frame's source (a folder or an Immich album). A new
