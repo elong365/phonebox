@@ -372,6 +372,43 @@ W.stocks = {
     box.append(h('div', 'w-title', stockText('Stocks'), status), list);
     const price = new Intl.NumberFormat(LOCALE, { maximumFractionDigits: 8 });
     let last = '';
+    // The shared .fx-i grid fixes the name track at 3.6em, room for about two CJK characters plus
+    // an ellipsis, so A-share names (上证指数, 深证成指) show truncated. --fx-name widens that one
+    // track to the longest name in the list; the numeric columns follow the grid, and a name that
+    // still does not fit keeps the ellipsis. Only this list sets the variable: exchange and crypto
+    // rows keep the CSS default (3.6em, 3.4em in a ≤260px widget).
+    const measurer = h('span', null, '');
+    measurer.style.cssText = 'position:absolute;left:-9999px;top:0;white-space:nowrap;visibility:hidden;pointer-events:none';
+    let trackDefault = 0; // the CSS default name track (px), read before the first fit touches it
+    const fitNameColumn = () => {
+      const rows = [...list.children].filter((el) => el.classList.contains('fx-i'));
+      if (!rows.length) return;
+      const first = rows[0];
+      const cs = getComputedStyle(first);
+      const cols = cs.gridTemplateColumns.trim().split(/\s+/);
+      const narrow = cols.length < 4; // ≤260px widget: the container query drops the change column
+      if (!trackDefault) trackDefault = parseFloat(cols[0]) || 0;
+      measurer.style.fontSize = cs.fontSize;
+      measurer.style.fontFamily = cs.fontFamily;
+      list.append(measurer);
+      let namePx = 0, pricePx = 0;
+      for (const row of rows) {
+        measurer.style.fontWeight = 700; // .fx-i b
+        measurer.textContent = row.firstChild.textContent;
+        namePx = Math.max(namePx, measurer.offsetWidth);
+        measurer.style.fontWeight = 500; // .fx-v
+        measurer.textContent = row.children[1].textContent;
+        pricePx = Math.max(pricePx, measurer.offsetWidth);
+      }
+      measurer.remove();
+      const font = parseFloat(cs.fontSize) || 13;
+      const gap = parseFloat(cs.columnGap) || 8;
+      const fixed = (narrow ? gap * 2 : gap * 3) + first.children[2].offsetWidth
+        + (narrow ? 0 : first.children[3].offsetWidth) + pricePx; // pct, change and price keep their room
+      const cap = Math.max(list.clientWidth - fixed - 4, font * 2); // never below today's ~2-character fallback
+      const nameCol = Math.min(Math.max(namePx + 2, Math.min(trackDefault || font * 3.6, cap)), cap);
+      list.style.setProperty('--fx-name', `${Math.max(0, Math.round(nameCol))}px`);
+    };
     const load = every(30_000, async () => {
       try {
         const d = await api('/stocks', 'GET', 6000);
@@ -394,13 +431,16 @@ W.stocks = {
           row.style.color = col;
           return row;
         }));
+        fitNameColumn();
       } catch (_) {
         status.textContent = last ? staleText : '';
         if (!last) list.replaceChildren(h('div', 'empty', t('w.offline')));
         return false;
       }
     });
-    return { update: load };
+    const ro = new ResizeObserver(fitNameColumn);
+    ro.observe(list);
+    return { update: load, destroy() { ro.disconnect(); measurer.remove(); } };
   },
 };
 
