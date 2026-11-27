@@ -128,3 +128,76 @@ public sealed class WorkBuddyEventsTests : IDisposable
         Directory.Delete(_dir, recursive: true);
     }
 }
+
+public sealed class WorkBuddyRuleStatusTests : IDisposable
+{
+    private readonly string _dir = Path.Combine(Path.GetTempPath(), "pb-wb-rule-" + Guid.NewGuid().ToString("N"));
+
+    public WorkBuddyRuleStatusTests() => Directory.CreateDirectory(_dir);
+
+    private static AgentSession Session(string project, string status) =>
+        new("workbuddy:1", "workbuddy", project, project, status, null, 1, 1, Pid: 1);
+
+    /// <summary>The engine with the session snapshot injected, driven without its loop. The
+    /// config turns WorkBuddy sessions on: the snapshot filters workbuddy rows otherwise.</summary>
+    private (RuleEngine Engine, PushStore Push, SessionMonitor Sessions) EngineWith(string ruleJson)
+    {
+        var cfgPath = Path.Combine(_dir, "config.json");
+        File.WriteAllText(cfgPath, $$"""{ "workBuddy": { "sessions": true }, "rules": [ {{ruleJson}} ] }""");
+        var cfg = new ConfigStore(cfgPath);
+        var push = new PushStore(NullLogger<PushStore>.Instance, Path.Combine(_dir, "push.json"));
+        var sessions = new SessionMonitor(NullLogger<SessionMonitor>.Instance, cfg);
+        var engine = new RuleEngine(cfg, push, sessions,
+            new MediaMonitor(NullLogger<MediaMonitor>.Instance),
+            new SystemMonitor(NullLogger<SystemMonitor>.Instance),
+            new PrivacyMonitor(NullLogger<PrivacyMonitor>.Instance),
+            new CalendarMonitor(cfg, NullLogger<CalendarMonitor>.Instance),
+            new ObsMonitor(cfg, NullLogger<ObsMonitor>.Instance),
+            new QuotaMonitor(NullLogger<QuotaMonitor>.Instance),
+            new GitHubMonitor(NullLogger<GitHubMonitor>.Instance),
+            new BatteryMonitor(NullLogger<BatteryMonitor>.Instance),
+            new PingMonitor(), new AudioControl(), NullLogger<RuleEngine>.Instance);
+        engine.StartedAtMs = 0; // skip the start-up grace
+        return (engine, push, sessions);
+    }
+
+    [Fact]
+    public void WbStatusRuleFiresAndNotifies()
+    {
+        var (engine, push, sessions) = EngineWith(
+            """{"id":"wb","name":"WB","when":"wb-status","match":"waiting|failed","then":"notify","text":"{detail}"}""");
+        sessions.Sessions = [Session("report", "waiting")];
+        var seq = push.Seq;
+        engine.Evaluate();
+        var notify = push.Since(seq).Single(e => e.Kind == "notify");
+        Assert.Contains("report is now waiting", notify.Data!.Value.GetProperty("text").GetString());
+    }
+
+    [Fact]
+    public void WbStatusRuleStaysSilentOnOtherStatesAndTools()
+    {
+        var (engine, push, sessions) = EngineWith(
+            """{"id":"wb","name":"WB","when":"wb-status","match":"waiting|failed","then":"notify"}""");
+        // a busy WorkBuddy chat matches none of the listed states
+        sessions.Sessions = [Session("report", "busy")];
+        engine.Evaluate();
+        // a waiting Claude chat is not WorkBuddy's
+        sessions.Sessions = [new AgentSession("claude:s", "claude", "report", "report", "waiting", null, 1, 1, Pid: 1)];
+        engine.Evaluate();
+        Assert.Empty(push.Since(0).Where(e => e.Kind == "notify"));
+    }
+
+    [Fact]
+    public void WbStatusWithoutAMatchDefaultsToWaitingAndFailed()
+    {
+        var (engine, push, sessions) = EngineWith(
+            """{"id":"wb","name":"WB","when":"wb-status","then":"notify"}""");
+        sessions.Sessions = [Session("report", "completed")]; // not in the default pair
+        engine.Evaluate();
+        sessions.Sessions = [Session("report", "failed")];
+        engine.Evaluate();
+        Assert.Single(push.Since(0).Where(e => e.Kind == "notify"));
+    }
+
+    public void Dispose() => Directory.Delete(_dir, recursive: true);
+}

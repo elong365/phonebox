@@ -231,6 +231,18 @@ public sealed class RuleEngine(ConfigStore config, PushStore push, SessionMonito
                     || names.Any(n => s.Project.Contains(n, StringComparison.OrdinalIgnoreCase) || s.Tool.Equals(n, StringComparison.OrdinalIgnoreCase))));
                 return s is null ? (false, "") : (true, status == "waiting" ? $"{s.Project}: {s.WaitingFor ?? "needs you"}" : $"{s.Project} is working");
             }
+            case "wb-status":
+            {
+                // WorkBuddy's five states as one trigger: the Match lists the states to react to
+                // ("waiting|failed|completed|busy|unknown"), any of them holds the rule; an
+                // empty Match defaults to the two urgent ones (waiting, failed). Unlike the
+                // notification events (WorkBuddyEvents), a rule is a standing condition, not a
+                // one-shot: the engine's own CooldownMin already keeps a notify rule from
+                // firing twice in a row, so no transition bookkeeping of its own is needed here.
+                var wanted = names.Length == 0 ? ["waiting", "failed"] : names.Select(n => n.ToLowerInvariant()).ToArray();
+                var s = sessions.Snapshot().FirstOrDefault(s => s.Tool == "workbuddy" && wanted.Contains(s.Status));
+                return s is null ? (false, "") : (true, $"{s.Project} is now {s.Status}");
+            }
             case "media-playing":
             {
                 var m = media.Snapshot();

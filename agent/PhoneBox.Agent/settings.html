@@ -2966,6 +2966,7 @@ const tl = (s) => (window.PhoneBoxI18n?.tc ? window.PhoneBoxI18n.tc(s) : s);
 const TRIGGERS = {
   'session-waiting': { label: 'an AI session needs me', match: 'any project (or: api|docs, codex)' },
   'session-busy': { label: 'an AI session is working', match: 'any project (or: api|docs, codex)' },
+  'wb-status': { label: 'a WorkBuddy chat is', match: 'waiting|failed (or: completed|busy|unknown)' },
   'media-playing': { label: 'music or video plays', match: 'any app (or: Spotify|Music)' },
   'process-running': { label: 'an app is running', match: 'zoom|Teams|obs64' },
   'app-in-front': { label: 'an app is in front', match: 'Code|obs64|Safari' },
