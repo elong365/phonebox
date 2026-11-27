@@ -422,6 +422,9 @@ public sealed class WorkBuddyConfig
     /// <summary>Show WorkBuddy's live sessions on the AI sessions widget (off by default: sharing
     /// what you chat about is opt-in, like OpenCode's and Cursor's).</summary>
     public bool Sessions { get; set; }
+    /// <summary>Tell the phone when a WorkBuddy chat starts waiting, fails or completes (off by
+    /// default; also off while "sessions" itself is off — no rows, nothing to tell about).</summary>
+    public bool Events { get; set; }
     /// <summary>How long the phone may answer before WorkBuddy asks in its own UI.</summary>
     public int TimeoutSec { get; set; } = 90;
     /// <summary>Only use the phone when the PC has been idle for a minute.</summary>

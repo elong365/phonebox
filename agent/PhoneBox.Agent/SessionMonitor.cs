@@ -27,7 +27,8 @@ public sealed record AgentSession(string Id, string Tool, string Name, string Pr
 ///  - Antigravity (opt-in): recent user transcripts under ~/.gemini/antigravity/brain and ~/.gemini/antigravity-cli/brain
 ///  - OpenCode: recent sessions from the local HTTP API of its background service (native and in WSL)
 /// </summary>
-public sealed partial class SessionMonitor(ILogger<SessionMonitor> log, ConfigStore? config = null) : BackgroundService
+public sealed partial class SessionMonitor(ILogger<SessionMonitor> log, ConfigStore? config = null,
+    PushStore? pushes = null) : BackgroundService
 {
     private static readonly string Home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
     private readonly ConcurrentDictionary<string, string> _codexCwd = new();
@@ -133,6 +134,13 @@ public sealed partial class SessionMonitor(ILogger<SessionMonitor> log, ConfigSt
             try { list.AddRange(ReadWsl(cfg?.Claude.WatchWsl == true, cfg?.Cursor.Sessions == true && cfg.Cursor.WatchWsl)); }
             catch (Exception ex) { log.LogDebug("wsl sessions: {Msg}", ex.Message); }
             _pub = new(list, extraDirs);
+            // WorkBuddy's state changes become phone notifications from the
+            // snapshot just published; both switches stay off until the
+            // settings turn them on (no rows read, no notifications sent).
+            // Without a PushStore (a plain test constructor) nothing is emitted.
+            if (pushes is not null)
+                try { WorkBuddyEvents.Watch(_pub.Sessions, config?.Get().WorkBuddy ?? new WorkBuddyConfig(), pushes, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()); }
+                catch (Exception ex) { log.LogDebug("workbuddy events: {Msg}", ex.Message); }
             ClaudeTranscript.Trim(list.Where(s => s.Tool == "claude").Select(s => s.Id["claude:".Length..]), config?.Get().Claude.ShareConversation ?? false);
             await Task.Delay(2000, ct);
         }

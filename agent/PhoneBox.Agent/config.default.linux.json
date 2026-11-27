@@ -39,7 +39,7 @@
   // the phone answer. "shareSessionTitles" puts the session titles on the phone too.
   "opencode": { "phoneApprovals": false, "sessions": false, "timeoutSec": 90, "alwaysCountdownSec": 10, "watchWsl": false, "shareSessionTitles": false },
   "stocks": [],
-  "workBuddy": { "sessions": false, "phoneApprovals": false, "onlyWhenAway": false, "timeoutSec": 90 },
+  "workBuddy": { "sessions": false, "events": false, "phoneApprovals": false, "onlyWhenAway": false, "timeoutSec": 90 },
   // App console widget (Windows): keys and dial bindings per app, matched by the focused window's process name
   "console": { "profiles": [] },
   // Phone mic (Windows, off by default): the phone's microphone played into a virtual cable ("endpoint", e.g. VB-CABLE's CABLE Input),

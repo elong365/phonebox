@@ -1330,11 +1330,15 @@ export const levelOf = (v) => v.level || (typeof v.value === 'string' ? (/^(ok|p
 // ---------------------------------------------------------------- notifications (POST /api/notify)
 export function handleNotify(d) {
   const level = d.level === 'error' ? 'err' : d.level === 'ok' || d.level === 'success' ? 'ok' : d.level === 'warn' ? 'warn' : '';
+  // "key|arg" carries a translatable text (the agent sends the i18n key, the
+  // project name as its argument): a text without the separator stays as sent
+  const split = typeof d.text === 'string' && d.text.includes('|') ? d.text.split('|') : null;
+  const text = split && split[0].endsWith('wbEvents.') ? t(split[0], { project: split.slice(1).join('|') }) : d.text;
   if (d.wake && nightOn) { wakeUntil = Date.now() + 30_000; setNight(false); }
   undim();
-  toast(d.text || '', level, d.title || '', d.seconds || 5);
+  toast(text || '', level, d.title || '', d.seconds || 5);
   if (d.vibrate !== false) buzz(level === 'err' ? '0,90,90,90,90,160' : '0,70,110,70');
-  D.notes.unshift({ title: d.title || '', text: d.text || '', level: d.level || 'info', at: Date.now() });
+  D.notes.unshift({ title: d.title || '', text: text || '', level: d.level || 'info', at: Date.now() });
   D.notes = D.notes.slice(0, 30);
   store.set('notes', D.notes);
   emit('notes');

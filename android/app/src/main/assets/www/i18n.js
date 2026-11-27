@@ -118,6 +118,10 @@
       'panel.answerSend': 'Send',
       'panel.answered': 'Answer sent: {answer}',
       'panel.answerCustom': 'Type your own answer…',
+      // WorkBuddy session events (the agent's notify events, WorkBuddyEvents)
+      'wbEvents.waiting': '{project} is waiting for you',
+      'wbEvents.failed': '{project} failed',
+      'wbEvents.completed': '{project} completed',
 
       // Panel: Rules & Sessions
       'panel.rulesPausedToast': 'Rules paused for an hour',

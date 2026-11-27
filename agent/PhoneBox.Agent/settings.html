@@ -924,6 +924,7 @@ nav a.on::before { color: var(--accent); }
         <div class="field" style="max-width:260px;margin-top:12px"><label for="workBuddyTimeout" data-i18n="s.claude.timeout">Seconds to answer before the terminal takes over</label><input id="workBuddyTimeout" type="number" min="10" max="3600" data-bind="workBuddy.timeoutSec" data-type="int"></div>
         <p class="hint" data-i18n="s.claude.timeoutReinstall">Each hook keeps the seconds it was installed with: after changing them, remove the hook and install it again.</p>
         <label class="check"><input type="checkbox" data-bind="workBuddy.sessions"> <span data-i18n="s.workbuddy.sessions">Show WorkBuddy sessions</span></label>
+        <label class="check"><input type="checkbox" data-bind="workBuddy.events"> <span data-i18n="s.workbuddy.events">Tell the phone when a WorkBuddy chat waits, fails or completes</span></label>
 
         <div class="row" style="margin:14px 0 4px"><b style="min-width:92px">OpenCode</b></div>
         <p class="hint" style="margin:-2px 0 12px" data-i18n="s.opencode.hint">OpenCode permission prompts and agent questions reach the phone while its background service is running. Off until you turn it on here. Allow always saves the requested pattern for the project, so it arms only after a short countdown.</p>
@@ -4143,7 +4144,7 @@ function fillDefaults() {
   cfg.charge ??= { enabled: false, min: 50, max: 80, method: 'ha' };
   cfg.steam ??= { enabled: false };
   cfg.stocks ??= [];
-  cfg.workBuddy = { sessions: false, phoneApprovals: false, onlyWhenAway: false, timeoutSec: 90, ...cfg.workBuddy };
+  cfg.workBuddy = { sessions: false, events: false, phoneApprovals: false, onlyWhenAway: false, timeoutSec: 90, ...cfg.workBuddy };
 }
 
 async function load() {
