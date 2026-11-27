@@ -702,7 +702,7 @@
       'sess.shell': 'Running a command',
       'sess.completed': 'Completed',
       'sess.failed': 'Failed',
-      'sess.stopped': 'stopped',
+      'sess.stopped': 'Stopped',
       'sess.aborted': 'Aborted',
       'sess.idle': 'Idle',
       'sess.waitingData': 'Waiting for session data…',
