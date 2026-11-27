@@ -398,6 +398,8 @@
       'w.processes': 'Processes',
       'w.memory': 'Memory',
       'w.noOpenSessions': 'No open sessions',
+      'w.nUnknown': '{n} unknown',
+      'w.nFinished': '{n} finished',
       'w.noAiSessions': 'No Claude Code / Codex / Grok / Cursor / OpenCode / Antigravity sessions open',
       'w.note.cancel': 'Cancel',
       'w.note.save': 'Save',

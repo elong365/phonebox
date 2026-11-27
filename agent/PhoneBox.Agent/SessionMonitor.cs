@@ -7,12 +7,16 @@ namespace PhoneBox.Agent;
 
 /// <param name="Status">busy | waiting | shell | idle</param>
 /// <param name="Title">The chat's title: carried only while the user shares session titles — Claude Code's own setting, "Show OpenCode session titles" for OpenCode, or "Show Antigravity chat titles on the phone" for Antigravity.</param>
+/// <param name="Heartbeat">The timestamp the tool's own freshness is judged on (WorkBuddy's lastHeartbeat).
+/// Distinct from <see cref="AgentSession.Since"/>: a status-change time is not a heartbeat. Null for
+/// tools that report no heartbeat, so a stale badge keyed on this never fires for them.</param>
 public sealed record AgentSession(string Id, string Tool, string Name, string Project, string Status,
     string? WaitingFor, long Since, long StartedAt, int? Pid = null,
     string? Model = null, string? Effort = null, long? TotalTokens = null, long? InputTokens = null,
     long? OutputTokens = null, long? CachedInputTokens = null, long? ReasoningTokens = null,
     long? LastInputTokens = null, long? ContextWindow = null, long? TurnStartedAt = null,
-    string? Outcome = null, string? LastTool = null, string? Title = null);
+    string? Outcome = null, string? LastTool = null, string? Title = null,
+    long? Heartbeat = null);
 
 /// <summary>
 /// Watches running AI coding sessions (local and read-only):
@@ -269,7 +273,9 @@ public sealed partial class SessionMonitor(ILogger<SessionMonitor> log, ConfigSt
                     Id: "workbuddy:" + (string.IsNullOrWhiteSpace(sessionId) ? pid.ToString() : sessionId),
                     Tool: "workbuddy", Name: project, Project: project, Status: status,
                     WaitingFor: null, Since: Long(root, "updatedAt") ?? heartbeat, StartedAt: started, Pid: pid,
-                    Model: Str(root, "model"), Outcome: outcome);
+                    Model: Str(root, "model"), Outcome: outcome,
+                    // the heartbeat the row's own freshness is judged on, not the status-change time
+                    Heartbeat: heartbeat);
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or InvalidOperationException)
             { /* The status file can be replaced between poll ticks. */ }

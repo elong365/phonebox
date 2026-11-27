@@ -759,17 +759,19 @@ W.sessions = {
       const timer = setInterval(load, 3000);
       return () => { gone = true; clearInterval(timer); };
     };
-    // WorkBuddy's setup check: three lines — the hook, the agent-side switch and the feed's age.
+    // WorkBuddy's setup check: three lines — the hook, the approval switch and the heartbeat's age.
     // Anything that cannot be read says "unknown" rather than "on": a check that fails must not
     // pass itself (fail-loud). Values go in with textContent only.
     const workbuddyCheck = async (panel, s) => {
       const box = h('div', 'session-conv wb-check');
       panel.append(box);
-      const sinceAge = s.since != null ? Math.max(0, Math.round((Date.now() - s.since) / 1000)) : null;
+      // the heartbeat the row's own freshness is judged on; since is a status-change time and can differ
+      const beat = s.heartbeat ?? s.since;
+      const beatAge = beat != null ? Math.max(0, Math.round((Date.now() - beat) / 1000)) : null;
       const rows = [
         [tp('Hook'), api('/workbuddy/hook').then((d) => d.installed ? d.path || tp('installed') : tp('not installed'))],
-        [tp('Agent setting'), Promise.resolve(cfg.workBuddy?.sessions === true ? tp('on') : cfg.workBuddy?.sessions === false ? tp('off') : null)],
-        [tp('Last heartbeat'), Promise.resolve(sinceAge == null ? null : sinceAge > 90 ? tp('stale') : tpv('{n}s ago', { n: sinceAge }))],
+        [tp('Phone approvals'), api('/workbuddy/hook').then((d) => d.approvals === true ? tp('on') : d.approvals === false ? tp('off') : null)],
+        [tp('Last heartbeat'), Promise.resolve(beatAge == null ? null : beatAge > 90 ? tp('stale') : tpv('{n}s ago', { n: beatAge }))],
       ];
       box.replaceChildren(h('div', 'conv-h', tp('WorkBuddy check')), ...await Promise.all(rows.map(async ([label, value]) => {
         let text;
@@ -825,16 +827,24 @@ W.sessions = {
         if (!sessions) return;
         const counts = { waiting: 0, busy: 0, shell: 0, idle: 0 };
         sessions.forEach((s) => (counts[s.status] = (counts[s.status] || 0) + 1));
+        // the statuses that mean a turn is over count together as finished; unknown gets its own
+        // fragment so a list of rows never reads as "no open sessions"
+        const done = counts.completed + counts.failed + counts.stopped;
         sum.textContent = [
           counts.busy + counts.shell ? tpv('{n} working', { n: counts.busy + counts.shell }) : '',
           counts.waiting ? tpv('{n} waiting', { n: counts.waiting }) : '',
           counts.idle ? tpv('{n} idle', { n: counts.idle }) : '',
-        ].filter(Boolean).join(' · ') || t('w.noOpenSessions');
+          done ? tpv('{n} finished', { n: done }) : '',
+          counts.unknown ? tpv('{n} unknown', { n: counts.unknown }) : '',
+        ].filter(Boolean).join(' · ') || (sessions.length ? tpv('{n} unknown', { n: sessions.length }) : t('w.noOpenSessions'));
         const sorted = [...sessions].sort((a, b) => (S_ORDER[a.status] ?? 9) - (S_ORDER[b.status] ?? 9) || b.since - a.since);
         const rows = sorted.length ? sorted.map((s) => {
-          // a row whose data stopped flowing over 90 s ago dims and gets a staleness badge: the
-          // dot it shows is only as fresh as the feed, so old data says so instead of posing as live
-          const stale = s.since != null && Date.now() - s.since > 90_000;
+          // a row whose heartbeat stopped flowing over 90 s ago dims and gets a staleness badge: the
+          // dot it shows is only as fresh as the feed, so old data says so instead of posing as live.
+          // Only a tool that reports a heartbeat gets the check: a since that records the last status
+          // change (Claude, Cursor) grows on its own while a busy session keeps working, so keying
+          // staleness on it would grey live rows.
+          const stale = s.heartbeat != null && Date.now() - s.heartbeat > 90_000;
           const row = h('button', 'sess ' + s.status + (stale ? ' stale' : ''),
             h('span', 'st'), h('span', 'tl ' + s.tool, toolIcon(s.tool)),
             h('span', 'sess-main', h('span', 'nm', titleOf(s)), h('span', 'sess-meta', [folderOf(s), [s.model, s.effort].filter(Boolean).join(' · ') || statusText(s)].filter(Boolean).join(' · '))),

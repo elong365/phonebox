@@ -1051,7 +1051,13 @@ app.MapPost(WorkBuddyHook.Endpoint, async (HttpRequest req, ConfigStore cfg, App
     var output = await ClaudeHook.HandleWorkBuddyAsync(input, cfg, approvals, sessions, req.HttpContext.RequestAborted);
     return output is null ? Results.Text("") : Results.Json(output);
 });
-app.MapGet("/api/workbuddy/hook", () => Results.Json(new { installed = WorkBuddyHook.Installed(), path = WorkBuddyHook.SettingsPath }));
+app.MapGet("/api/workbuddy/hook", (ConfigStore cfg) => Results.Json(new
+{
+    installed = WorkBuddyHook.Installed(),
+    path = WorkBuddyHook.SettingsPath,
+    // the phone-safe self-check reads the approval switch here: the config file itself stays on this computer
+    approvals = cfg.Get().WorkBuddy.PhoneApprovals,
+}));
 app.MapPost("/api/workbuddy/hook", (ConfigStore cfg) => WorkBuddyHook.Configure(true, Port, cfg.Get().WorkBuddy.TimeoutSec) is { } err ? Results.BadRequest(new { error = err }) : Results.Ok());
 app.MapDelete("/api/workbuddy/hook", (ConfigStore cfg) => WorkBuddyHook.Configure(false, Port, cfg.Get().WorkBuddy.TimeoutSec) is { } err ? Results.BadRequest(new { error = err }) : Results.Ok());
 

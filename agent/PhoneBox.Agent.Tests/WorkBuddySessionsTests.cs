@@ -28,6 +28,9 @@ public sealed class WorkBuddySessionsTests : IDisposable
         Assert.Equal("busy", live.Status);
         Assert.Equal("fixture-model", live.Model);
         Assert.Null(live.Title);
+        // the panel's heartbeat age and stale badge judge on the heartbeat the agent itself
+        // judges on, not on the status-change time that Since may carry
+        Assert.Equal(200, live.Heartbeat);
         // fail-loud: a heartbeat that stopped over 90 s ago and no outcome field in the file
         // reads "unknown", not a healthy idle
         Assert.Equal("unknown", Assert.Single(SessionMonitor.ReadWorkBuddy(_home, pid => pid != 49, nowMs: 90_201)).Status);
@@ -156,6 +159,21 @@ public sealed class WorkBuddySessionsTests : IDisposable
         Assert.Contains("other", File.ReadAllText(path));
         Assert.Null(ClaudeHook.Configure(false, 8765, 90, path, WorkBuddyHook.Endpoint));
         Assert.False(ClaudeHook.Installed(path, WorkBuddyHook.Endpoint));
+    }
+
+    /// <summary>The phone-safe diagnostics the self-check card reads over Wi-Fi: the hook's installed
+    /// flag and the approval switch, and nothing else; the endpoint is whitelisted for exactly that route.</summary>
+    [Fact]
+    public void TheHookStatusEndpointCarriesTheApprovalSwitchAndIsWhitelisted()
+    {
+        var path = Path.Combine(_home, "config-hook.json");
+        File.WriteAllText(path, """{"workbuddy": {"phoneApprovals": true}}""");
+        var cfg = new ConfigStore(path).Get();
+        Assert.True(cfg.WorkBuddy.PhoneApprovals);
+        Assert.True(Lan.AllowedOverLan("/api/workbuddy/hook"));   // the self-check's read
+        Assert.False(Lan.AllowedOverLan("/api/workbuddy/hook/extra")); // only the one route
+        // the POST/DELETE that write the settings file stay local-only
+        Assert.False(Lan.AllowedOverLan("/api/workbuddy/hook/other"));
     }
 
     public void Dispose() => Directory.Delete(_home, recursive: true);
