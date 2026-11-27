@@ -118,6 +118,8 @@
       'panel.answerSend': 'Send',
       'panel.answered': 'Answer sent: {answer}',
       'panel.answerCustom': 'Type your own answer…',
+      'panel.showMore': 'Show more',
+      'panel.showLess': 'Show less',
 
       // Panel: Rules & Sessions
       'panel.rulesPausedToast': 'Rules paused for an hour',

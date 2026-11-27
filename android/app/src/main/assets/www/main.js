@@ -1383,12 +1383,16 @@ export async function loadApprovals() {
   renderApproval();
 }
 
+// Whether the approval card's detail is fully shown; the clamp resets with every new card.
+let detailExpanded = false;
+
 export function renderApproval() {
   const a = approvals[0];
   const box = $('approval');
-  if (!a) { box.hidden = true; approvalShown = null; stopAlwaysCountdown(); return; }
+  if (!a) { box.hidden = true; approvalShown = null; detailExpanded = false; stopAlwaysCountdown(); return; }
   if (approvalShown !== a.id) {
     approvalShown = a.id;
+    detailExpanded = false;
     lastTouch = Date.now();
     undim();
     // before the night screen wakes: chime() keeps quiet at night, like the finish sound
@@ -1435,8 +1439,18 @@ export function renderApproval() {
   $('apCount').textContent = approvals.length > 1 ? t('panel.oneOfN', { n: approvals.length }) : '';
   $('apTool').textContent = a.tool;
   $('apDesc').textContent = a.description || '';
-  $('apDetail').textContent = a.detail || '';
+  // the detail collapses to its first lines when it is long: the whole text is
+  // already in a.detail, so expanding never calls the agent again
+  const detail = a.detail || '';
+  const CLAMP_CHARS = 400;
+  const longDetail = detail.length > CLAMP_CHARS || detail.split('\n').length > 6;
+  const shown = detailExpanded ? detail : longDetail && !detailExpanded
+    ? detail.split('\n').slice(0, 6).join('\n').slice(0, CLAMP_CHARS) : detail;
+  $('apDetail').textContent = shown;
   $('apDetail').hidden = !a.detail;
+  const toggle = $('apDetailToggle');
+  toggle.hidden = !longDetail;
+  if (!toggle.hidden) toggle.textContent = detailExpanded ? t('panel.showLess') : t('panel.showMore');
   // what Allow always would save for the project, so the card says what it agrees to from then on
   const pattern = !asking && a.always && a.alwaysPattern ? t('panel.alwaysSaves', { pattern: a.alwaysPattern }) : '';
   $('apPattern').textContent = pattern;
@@ -1579,6 +1593,8 @@ $('apAllow').addEventListener('click', () => decide('allow'));
 $('apAlways').addEventListener('click', () => decide('always'));
 $('apDeny').addEventListener('click', () => decide('deny'));
 $('apSkip').addEventListener('click', () => decide('skip'));
+// Expanding the detail only re-renders with what the card already carries.
+$('apDetailToggle').addEventListener('click', () => { detailExpanded = !detailExpanded; haptic(); renderApproval(); });
 
 function sendCustomAnswer() {
   const v = $('apCustomText').value.trim();
