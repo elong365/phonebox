@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+**Agent**
+- **WorkBuddy**: AI sessions rows now show finished, stopped, failed and unknown states instead
+  of a stale "busy" — a dead feed never reads as healthy — and the session details carry a
+  WorkBuddy self-check (hook installed, approval switch, heartbeat age).
+
 ## 0.9.31 — 2026-11-27
 
 - Pages: a dimmed **photo background** per page, from the Photo frame's source (a folder or an Immich album). A new
