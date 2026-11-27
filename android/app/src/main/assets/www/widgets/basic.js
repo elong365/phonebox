@@ -677,7 +677,7 @@ W.sessions = {
     box.append(h('div', 'w-head', h('span', 's-label', t('w.sessions')), sum), list);
     box.style.setProperty('--c', '#d97757');
     const tokens = (n) => n == null ? '—' : n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e3 ? (n / 1e3).toFixed(1) + 'k' : String(n);
-    const statusText = (s) => s.status === 'busy' ? t('sess.working') : s.status === 'waiting' ? t('sess.waiting') : s.status === 'shell' ? t('sess.shell') : s.outcome === 'completed' ? t('sess.completed') : s.outcome === 'failed' ? t('sess.failed') : s.outcome === 'aborted' ? t('sess.aborted') : t('sess.idle');
+    const statusText = (s) => s.status === 'busy' ? t('sess.working') : s.status === 'waiting' ? t('sess.waiting') : s.status === 'shell' ? t('sess.shell') : s.status === 'completed' ? t('sess.completed') : s.status === 'failed' ? t('sess.failed') : s.status === 'stopped' ? t('sess.stopped') : s.status === 'unknown' ? tp('unknown') : s.outcome === 'completed' ? t('sess.completed') : s.outcome === 'failed' ? t('sess.failed') : s.outcome === 'aborted' ? t('sess.aborted') : t('sess.idle');
     // The tool each session comes from: one glyph in the list, a glyph and a name in the details panel.
     const toolIcon = (tool) => tool === 'claude' ? '✳' : tool === 'codex' ? '◎' : tool === 'cursor' ? '◆' : tool === 'opencode' ? '◈' : tool === 'antigravity' ? Q_STYLE.antigravity.logo : tool === 'grok' ? Q_STYLE.grok.logo : tool === 'workbuddy' ? '❖' : '◎';
     const toolTitle = (tool) => tool === 'claude' ? 'Claude Code' : tool === 'codex' ? 'Codex' : tool === 'cursor' ? 'Cursor' : tool === 'opencode' ? 'OpenCode' : tool === 'antigravity' ? 'Antigravity' : tool === 'grok' ? 'Grok' : tool === 'workbuddy' ? 'WorkBuddy' : 'Codex';
@@ -811,10 +811,14 @@ W.sessions = {
         ].filter(Boolean).join(' · ') || t('w.noOpenSessions');
         const sorted = [...sessions].sort((a, b) => (S_ORDER[a.status] ?? 9) - (S_ORDER[b.status] ?? 9) || b.since - a.since);
         const rows = sorted.length ? sorted.map((s) => {
-          const row = h('button', 'sess ' + s.status,
+          // a row whose data stopped flowing over 90 s ago dims and gets a staleness badge: the
+          // dot it shows is only as fresh as the feed, so old data says so instead of posing as live
+          const stale = s.since != null && Date.now() - s.since > 90_000;
+          const row = h('button', 'sess ' + s.status + (stale ? ' stale' : ''),
             h('span', 'st'), h('span', 'tl ' + s.tool, toolIcon(s.tool)),
             h('span', 'sess-main', h('span', 'nm', titleOf(s)), h('span', 'sess-meta', [folderOf(s), [s.model, s.effort].filter(Boolean).join(' · ') || statusText(s)].filter(Boolean).join(' · '))),
-            h('span', 'ds', shortDur(Date.now() - s.since)));
+            h('span', 'ds', shortDur(Date.now() - s.since)),
+            stale ? h('span', 'stale-badge', tp('stale')) : null);
           row.type = 'button';
           row.addEventListener('click', () => openDetails(s));
           return row;

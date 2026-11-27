@@ -1111,7 +1111,7 @@ export function paceInfo(l) {
 }
 
 // ---------------------------------------------------------------- sessions & GitHub
-export const S_ORDER = { waiting: 0, busy: 1, shell: 2, idle: 3 };
+export const S_ORDER = { waiting: 0, failed: 1, busy: 2, shell: 3, completed: 4, stopped: 4, idle: 5, unknown: 6 };
 export const prevStatus = new Map();
 export let workLoaded = false;
 

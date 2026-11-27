@@ -28,7 +28,86 @@ public sealed class WorkBuddySessionsTests : IDisposable
         Assert.Equal("busy", live.Status);
         Assert.Equal("fixture-model", live.Model);
         Assert.Null(live.Title);
-        Assert.Equal("idle", Assert.Single(SessionMonitor.ReadWorkBuddy(_home, pid => pid != 49, nowMs: 90_201)).Status);
+        // fail-loud: a heartbeat that stopped over 90 s ago and no outcome field in the file
+        // reads "unknown", not a healthy idle
+        Assert.Equal("unknown", Assert.Single(SessionMonitor.ReadWorkBuddy(_home, pid => pid != 49, nowMs: 90_201)).Status);
+    }
+
+    [Fact]
+    public void ReadsOutcomeStatesFromStatusFiles()
+    {
+        var dir = Directory.CreateDirectory(Path.Combine(_home, ".workbuddy", "sessions"));
+        File.WriteAllText(Path.Combine(dir.FullName, "60.json"), """
+            {"pid":60,"kind":"interactive","sessionId":"done","cwd":"/work/done","startedAt":100,
+             "lastHeartbeat":200,"status":"completed"}
+            """);
+        File.WriteAllText(Path.Combine(dir.FullName, "61.json"), """
+            {"pid":61,"kind":"interactive","sessionId":"boom","cwd":"/work/boom","startedAt":100,
+             "lastHeartbeat":200,"status":"failed"}
+            """);
+        File.WriteAllText(Path.Combine(dir.FullName, "62.json"), """
+            {"pid":62,"kind":"interactive","sessionId":"halt","cwd":"/work/halt","startedAt":100,
+             "lastHeartbeat":200,"outcome":"stopped"}
+            """);
+        File.WriteAllText(Path.Combine(dir.FullName, "63.json"), """
+            {"pid":63,"kind":"interactive","sessionId":"running","cwd":"/work/running","startedAt":100,
+             "lastHeartbeat":200,"status":"working"}
+            """);
+
+        // no real status file carries a status/outcome field today (WorkBuddy 2.176):
+        // these rows come to life only when a future version writes one, so the parser
+        // is ready without inventing anything now
+        var rows = SessionMonitor.ReadWorkBuddy(_home, pid => true, nowMs: 201).ToDictionary(s => s.Id);
+        Assert.Equal("completed", rows["workbuddy:done"].Status);
+        Assert.Equal("failed", rows["workbuddy:boom"].Status);
+        Assert.Equal("stopped", rows["workbuddy:halt"].Status);
+        // "working" is a turn in progress: the row reads busy, and no outcome is carried
+        Assert.Equal("busy", rows["workbuddy:running"].Status);
+        Assert.Null(rows["workbuddy:running"].Outcome);
+    }
+
+    [Fact]
+    public void StaleHeartbeatWithNoOutcomeReadsUnknown()
+    {
+        var dir = Directory.CreateDirectory(Path.Combine(_home, ".workbuddy", "sessions"));
+        // no real file has an outcome field: over 90 s of silence with the process
+        // still alive fails loud instead of posing as idle
+        File.WriteAllText(Path.Combine(dir.FullName, "70.json"), """
+            {"pid":70,"kind":"interactive","sessionId":"quiet","cwd":"/work/quiet","startedAt":1000,
+             "lastHeartbeat":2000}
+            """);
+        Assert.Equal("unknown", SessionMonitor.ReadWorkBuddy(_home, pid => true, nowMs: 2000 + 90_001).Single().Status);
+    }
+
+    [Fact]
+    public void DeadProcessFilesAreDropped()
+    {
+        var dir = Directory.CreateDirectory(Path.Combine(_home, ".workbuddy", "sessions"));
+        File.WriteAllText(Path.Combine(dir.FullName, "71.json"), """
+            {"pid":71,"kind":"interactive","sessionId":"gone","cwd":"/work/gone","startedAt":1000,
+             "lastHeartbeat":2000,"status":"completed"}
+            """);
+        // a dead process's file is dropped however fresh or final it looks
+        Assert.Empty(SessionMonitor.ReadWorkBuddy(_home, pid => false, nowMs: 2001));
+    }
+
+    [Fact]
+    public void LiveHeartbeatWithOutcomeReadsBusyUntilTheTurnEnds()
+    {
+        var dir = Directory.CreateDirectory(Path.Combine(_home, ".workbuddy", "sessions"));
+        // "working" is a turn in progress: the row reads busy even though the file carries a status
+        File.WriteAllText(Path.Combine(dir.FullName, "80.json"), """
+            {"pid":80,"kind":"interactive","sessionId":"live","cwd":"/work/live","startedAt":100,
+             "lastHeartbeat":200,"status":"working"}
+            """);
+        Assert.Equal("busy", SessionMonitor.ReadWorkBuddy(_home, pid => true, nowMs: 201).Single().Status);
+
+        // the same file after the turn ends: the outcome wins over busy
+        File.WriteAllText(Path.Combine(dir.FullName, "80.json"), """
+            {"pid":80,"kind":"interactive","sessionId":"live","cwd":"/work/live","startedAt":100,
+             "lastHeartbeat":200,"status":"completed"}
+            """);
+        Assert.Equal("completed", SessionMonitor.ReadWorkBuddy(_home, pid => true, nowMs: 201).Single().Status);
     }
 
     [Theory]

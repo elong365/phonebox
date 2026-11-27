@@ -222,7 +222,17 @@ public sealed partial class SessionMonitor(ILogger<SessionMonitor> log, ConfigSt
         return _wslSessions = list;
     }
 
-    /// <summary>Reads WorkBuddy's live status files. No transcript or database is opened.</summary>
+    /// <summary>
+    /// Reads WorkBuddy's live status files. No transcript or database is opened.
+    /// The status files (as of WorkBuddy 2.176) carry: pid, lastHeartbeat, sessionId, cwd,
+    /// startedAt, kind, processIdentity, updatedAt — and nothing about what the chat
+    /// is doing: no waitingFor, no outcome, no approval flag (checked against real
+    /// files). So a file whose heartbeat is under 90 s old reads busy; one over 90 s
+    /// whose process still runs reads "unknown" — fail-loud, a lost feed never shows
+    /// as a healthy one. A dead process's file is dropped, as before. When a future
+    /// WorkBuddy writes a "status" (or "outcome") string there (working/completed/
+    /// stopped/failed), it is used as it is — nothing is invented while no field is there.
+    /// </summary>
     internal static IEnumerable<AgentSession> ReadWorkBuddy(string? homeDir = null, Func<int, bool>? isAlive = null, long? nowMs = null)
     {
         var home = homeDir ?? Home;
@@ -237,7 +247,7 @@ public sealed partial class SessionMonitor(ILogger<SessionMonitor> log, ConfigSt
             {
                 using var doc = JsonDocument.Parse(File.ReadAllText(file));
                 var root = doc.RootElement;
-                if (!root.TryGetProperty("pid", out var id) || !id.TryGetInt32(out var pid) || pid <= 0 || !alive(pid))
+                if (!root.TryGetProperty("pid", out var id) || !id.TryGetInt32(out var pid) || pid <= 0)
                     continue;
                 if (Str(root, "kind") == "prewarm") continue;
                 var sessionId = Str(root, "sessionId");
@@ -246,11 +256,20 @@ public sealed partial class SessionMonitor(ILogger<SessionMonitor> log, ConfigSt
                 var started = Long(root, "startedAt") ?? 0;
                 var heartbeat = Long(root, "lastHeartbeat") ?? Long(root, "updatedAt") ?? started;
                 var recent = heartbeat > 0 && now >= heartbeat && now - heartbeat < 90_000;
+                // No live file today carries a status/outcome field (checked against real
+                // files, WorkBuddy 2.176): when a future version writes one there —
+                // "working"/"completed"/"stopped"/"failed" — it becomes the row's state as
+                // it is; "working" means a turn still runs. Nothing is invented while no
+                // field is there: a heartbeat over 90 s with no outcome reads "unknown".
+                var outcome = Str(root, "status") ?? Str(root, "outcome");
+                if (outcome == "working") outcome = null;
+                var status = outcome ?? (recent ? "busy" : "unknown");
+                if (!alive(pid)) continue; // a dead process's file is dropped, as before
                 session = new AgentSession(
                     Id: "workbuddy:" + (string.IsNullOrWhiteSpace(sessionId) ? pid.ToString() : sessionId),
-                    Tool: "workbuddy", Name: project, Project: project, Status: recent ? "busy" : "idle",
+                    Tool: "workbuddy", Name: project, Project: project, Status: status,
                     WaitingFor: null, Since: Long(root, "updatedAt") ?? heartbeat, StartedAt: started, Pid: pid,
-                    Model: Str(root, "model"));
+                    Model: Str(root, "model"), Outcome: outcome);
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or InvalidOperationException)
             { /* The status file can be replaced between poll ticks. */ }
