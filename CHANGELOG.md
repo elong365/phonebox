@@ -6,6 +6,10 @@
 - **WorkBuddy**: AI sessions rows now show finished, stopped, failed and unknown states instead
   of a stale "busy" — a dead feed never reads as healthy — and the session details carry a
   WorkBuddy self-check (hook installed, approval switch, heartbeat age).
+- **WorkBuddy** (off by default): when Settings › WorkBuddy › "Tell the phone when a WorkBuddy chat waits, fails
+  or completes" is on, a chat that starts waiting, fails or finishes sends a phone notification
+  (the urgent ones vibrate; repeats within a minute collapse into one), and Rules gain a
+  "a WorkBuddy chat is" trigger over the waiting, failed, completed, busy and unknown states.
 
 ## 0.9.31 — 2026-11-27
 
