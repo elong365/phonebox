@@ -15,10 +15,12 @@ namespace PhoneBox.Agent;
 /// phone's own countdown is a guard rail, not the security check.</param>
 /// <param name="AlwaysPattern">What Allow always would save for the project (OpenCode's proposed pattern), shown on
 /// the card so the user can see what they would allow from then on.</param>
+/// <param name="HighRisk">The agent judged this request a high-risk write (see ClaudeHook.IsHighRisk);
+/// the phone asks for a second tap before allowing such a card.</param>
 public sealed record Approval(string Id, string Source, string Session, string Project, string Cwd, string Tool, string Detail,
     string? Description, long CreatedAt, long ExpiresAt, string Kind = "permission",
     ApprovalOption[]? Options = null, bool Custom = false, bool Always = false,
-    long AlwaysNotBefore = 0, string? AlwaysPattern = null);
+    long AlwaysNotBefore = 0, string? AlwaysPattern = null, bool HighRisk = false);
 
 /// <summary>One answer an agent question can be answered with.</summary>
 public sealed record ApprovalOption(string Value, string Label, string? Description);

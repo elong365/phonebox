@@ -84,6 +84,15 @@ public static class ClaudeHook
     }
 
     /// <summary>
+    /// The safety policy is judged on the trusted side (the agent): the phone only
+    /// presents what is decided here, and only this list may ever grow — it can
+    /// only tighten, never loosen. The write-class tools and every MCP tool (their
+    /// names alone do not say read from write, so they all count as writes).
+    /// </summary>
+    internal static bool IsHighRisk(string tool) =>
+        tool is "Write" or "Edit" or "MultiEdit" or "NotebookEdit" or "Bash" || tool.StartsWith("mcp__");
+
+    /// <summary>
     /// Shows one permission request (in the Claude Code PermissionRequest shape: tool_name, tool_input, cwd,
     /// session_id) on the phone and waits for it: "allow", "always" or "deny", or null when there is no answer (no
     /// phone, timed out, or an answer the agent has no use for). Each hook turns that into its own output, and checks
@@ -107,7 +116,7 @@ public static class ClaudeHook
         var shownCwd = cwd.Length <= 1000 ? cwd : "…" + cwd[^999..];
         var a = new Approval(ApprovalStore.NewId(), source, sessionId, project, shownCwd, ToolTitle(tool), question ? QuestionDetail(ti) : Detail(tool, ti),
             ti.ValueKind == JsonValueKind.Object ? Str(ti, "description") : null, now, now + Math.Clamp(timeoutSec ?? c.TimeoutSec, 10, 3600) * 1000L,
-            question ? "question" : "permission");
+            question ? "question" : "permission", HighRisk: !question && IsHighRisk(tool));
 
         var decision = await approvals.AskAsync(a, aborted);
         // "skip" and an OpenCode-style typed answer ("answer") have no hook equivalent: no decision here

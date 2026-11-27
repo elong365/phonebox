@@ -1583,6 +1583,7 @@ html.beat-4 .w-onair.on .oa-sign { box-shadow: 0 0 34px rgba(239, 68, 68, .9); }
 .ap-tool { font-size: 26px; font-weight: 600; letter-spacing: -0.01em; }
 .ap-desc { font-size: 13px; color: var(--muted); }
 .ap-desc:empty { display: none; }
+.ap-risk { padding: 6px 10px; border-radius: 10px; background: rgba(239, 68, 68, .12); border: 1px solid rgba(239, 68, 68, .4); color: #fca5a5; font-size: 12px; font-weight: 600; }
 .ap-detail { flex: 1; min-height: 0; overflow: auto; margin: 0; padding: 10px 12px; border-radius: 12px; background: #06080b; border: 1px solid var(--line);
   font: 12.5px/1.45 "Roboto Mono", monospace; color: #d5dce5; white-space: pre-wrap; word-break: break-word; touch-action: pan-y; -webkit-user-select: text; user-select: text; }
 .ap-detail-toggle { margin: -4px 0 0; padding: 4px; border: 0; background: transparent; color: var(--muted); font-size: 12px; font-weight: 600; text-align: start; cursor: pointer; }

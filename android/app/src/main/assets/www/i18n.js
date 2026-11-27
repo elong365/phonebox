@@ -120,6 +120,8 @@
       'panel.answerCustom': 'Type your own answer…',
       'panel.showMore': 'Show more',
       'panel.showLess': 'Show less',
+      'panel.confirmAllow': 'Tap again to confirm',
+      'panel.highRisk': 'High-risk write operation',
 
       // Panel: Rules & Sessions
       'panel.rulesPausedToast': 'Rules paused for an hour',

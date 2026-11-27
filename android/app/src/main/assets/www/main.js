@@ -1393,6 +1393,8 @@ export function renderApproval() {
   if (approvalShown !== a.id) {
     approvalShown = a.id;
     detailExpanded = false;
+    clearConfirmAllow();
+    $('apAllow').textContent = t('panel.allow');
     lastTouch = Date.now();
     undim();
     // before the night screen wakes: chime() keeps quiet at night, like the finish sound
@@ -1439,6 +1441,11 @@ export function renderApproval() {
   $('apCount').textContent = approvals.length > 1 ? t('panel.oneOfN', { n: approvals.length }) : '';
   $('apTool').textContent = a.tool;
   $('apDesc').textContent = a.description || '';
+  // the agent judged this a high-risk write; the card says so before any
+  // button is touched, so the second tap is a decision, not a surprise
+  const risk = !a.kind || a.kind === 'permission' ? !!a.highRisk : false;
+  $('apRisk').textContent = risk ? t('panel.highRisk') : '';
+  $('apRisk').hidden = !risk;
   // the detail collapses to its first lines when it is long: the whole text is
   // already in a.detail, so expanding never calls the agent again
   const detail = a.detail || '';
@@ -1534,7 +1541,8 @@ setInterval(tickApproval, 1000);
 // The card just expired: its buttons are locked by lockApprovalCard(), and a
 // newer prompt (or a fresh list) must not stay locked because of it.
 function lockedCard() {
-  return $('apAllow').disabled;
+  const b = $('apAllow');
+  return b.disabled;
 }
 
 function lockApprovalCard() {
@@ -1575,7 +1583,9 @@ export async function decide(decision, value, label) {
     // countdown for this card is still running — a failed post does not arm it early.
     if (approvals[0] && approvals[0].id === a.id) {
       const stillCounting = approvalShown === a.id && alwaysCountdown !== null;
+      clearConfirmAllow();
       $('apAllow').disabled = $('apDeny').disabled = $('apSkip').disabled = $('apCustomSend').disabled = false;
+      $('apAllow').textContent = t('panel.allow');
       $('apAlways').disabled = stillCounting;
       document.querySelectorAll('#apChoices .ap-opt').forEach((b) => { b.disabled = false; });
     }
@@ -1584,12 +1594,43 @@ export async function decide(decision, value, label) {
   // The typed draft is cleared only while this card is still the one on screen: a late success (the post landed
   // after the user had moved on) must not wipe the next question's draft. A card change clears it in renderApproval.
   if (decision === 'answer' && approvals[0] && approvals[0].id === a.id) $('apCustomText').value = '';
+  clearConfirmAllow();
   answered.add(a.id);
   if (answered.size > answeredCap) answered.delete(answered.values().next().value);
   approvals = approvals.filter((x) => x.id !== a.id);
   renderApproval();
 }
-$('apAllow').addEventListener('click', () => decide('allow'));
+// A high-risk write (judged by the agent, the card only carries the flag) does
+// not allow on the first tap: the Allow button becomes a "tap again to
+// confirm" for a few seconds, and only a second tap sends the answer. Deny is
+// never held back. The arm resets with every new card.
+let confirmAllow = null;
+
+function armConfirmAllow() {
+  clearConfirmAllow();
+  const b = $('apAllow');
+  const id = approvalShown;
+  let left = 5;
+  b.textContent = `${t('panel.confirmAllow')} · ${left}`;
+  confirmAllow = setInterval(() => {
+    left -= 1;
+    if (left > 0 && approvalShown === id) { b.textContent = `${t('panel.confirmAllow')} · ${left}`; return; }
+    clearConfirmAllow();
+    // back to a plain Allow while this card is still the one on screen
+    if (approvalShown === id && approvals[0] && approvals[0].id === id && !submitting.has(id))
+      b.textContent = t('panel.allow');
+  }, 1000);
+}
+
+function clearConfirmAllow() {
+  if (confirmAllow !== null) { clearInterval(confirmAllow); confirmAllow = null; }
+}
+
+$('apAllow').addEventListener('click', () => {
+  const a = approvals[0];
+  if (a && a.highRisk && confirmAllow === null && !submitting.has(a.id)) { armConfirmAllow(); return; }
+  decide('allow');
+});
 $('apAlways').addEventListener('click', () => decide('always'));
 $('apDeny').addEventListener('click', () => decide('deny'));
 $('apSkip').addEventListener('click', () => decide('skip'));
