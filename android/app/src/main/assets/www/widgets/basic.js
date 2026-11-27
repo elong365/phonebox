@@ -759,6 +759,26 @@ W.sessions = {
       const timer = setInterval(load, 3000);
       return () => { gone = true; clearInterval(timer); };
     };
+    // WorkBuddy's setup check: three lines — the hook, the agent-side switch and the feed's age.
+    // Anything that cannot be read says "unknown" rather than "on": a check that fails must not
+    // pass itself (fail-loud). Values go in with textContent only.
+    const workbuddyCheck = async (panel, s) => {
+      const box = h('div', 'session-conv wb-check');
+      panel.append(box);
+      const sinceAge = s.since != null ? Math.max(0, Math.round((Date.now() - s.since) / 1000)) : null;
+      const rows = [
+        [tp('Hook'), api('/workbuddy/hook').then((d) => d.installed ? d.path || tp('installed') : tp('not installed'))],
+        [tp('Agent setting'), Promise.resolve(cfg.workBuddy?.sessions === true ? tp('on') : cfg.workBuddy?.sessions === false ? tp('off') : null)],
+        [tp('Last heartbeat'), Promise.resolve(sinceAge == null ? null : sinceAge > 90 ? tp('stale') : tpv('{n}s ago', { n: sinceAge }))],
+      ];
+      box.replaceChildren(h('div', 'conv-h', tp('WorkBuddy check')), ...await Promise.all(rows.map(async ([label, value]) => {
+        let text;
+        try { text = await value; } catch (_) { text = null; }
+        const strong = h('strong', null, text ?? tp('unknown'));
+        if (text == null || text === tp('stale')) strong.classList.add('wb-unknown');
+        return h('div', 'wb-check-row', h('span', null, label), strong);
+      })));
+    };
     const openDetails = (s) => {
       haptic();
       const backdrop = h('div', 'session-backdrop');
@@ -792,6 +812,7 @@ W.sessions = {
       panel.append(h('div', 'session-grid', rows.filter(([, value]) => value != null)
         .map(([label, value]) => h('div', 'session-cell', h('span', null, tp(label)), h('strong', null, value)))));
       if (s.tool === 'codex' || s.tool === 'grok' || (s.tool === 'antigravity' && s.totalTokens != null)) panel.append(h('p', 'session-note', tp('Token totals are for this local session, not your account allowance.')));
+      if (s.tool === 'workbuddy') workbuddyCheck(panel, s);
       if (s.tool === 'claude') stopConversation = conversationSection(panel, s);
       backdrop.append(panel);
       document.body.append(backdrop);
