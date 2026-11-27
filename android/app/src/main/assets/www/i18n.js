@@ -122,6 +122,7 @@
       'wbEvents.waiting': '{project} is waiting for you',
       'wbEvents.failed': '{project} failed',
       'wbEvents.completed': '{project} completed',
+      's.workbuddy.events': 'Tell the phone when a WorkBuddy chat waits, fails or completes',
 
       // Panel: Rules & Sessions
       'panel.rulesPausedToast': 'Rules paused for an hour',
