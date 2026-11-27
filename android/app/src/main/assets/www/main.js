@@ -1495,11 +1495,38 @@ export function tickApproval() {
   const a = approvals[0];
   if (!a || $('approval').hidden) return;
   const left = a.expiresAt - Date.now();
+  // the seconds left on the card as mm:ss while the countdown runs; a prompt
+  // that expires stops at 0:00 instead of counting into the negative
+  const mmss = (ms) => {
+    const s = Math.max(0, Math.ceil(ms / 1000));
+    return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
+  };
   $('apTime').textContent = a.kind === 'question' ? t('panel.answerInTerminal')
-    : left > 0 ? t('panel.askedInTerminalIn', { time: fmtTime(left) }) : t('panel.askingInTerminal');
-  if (left < -3000) { approvals.shift(); renderApproval(); }
+    : left > 0 ? t('panel.askedInTerminalIn', { time: mmss(left) })
+    : t('panel.askedInTerminal');
+  if (left <= 0 && !lockedCard()) {
+    // expired: every button locks at once — an expired prompt must not be
+    // answerable here, not even in the seconds before the card goes away
+    lockApprovalCard();
+    $('apTime').textContent = t('panel.askedInTerminal');
+    // three seconds to read why the card went dark, then it leaves
+    setTimeout(() => {
+      if (approvals[0] && approvals[0].expiresAt <= Date.now()) { approvals.shift(); renderApproval(); }
+    }, 3000);
+  }
 }
 setInterval(tickApproval, 1000);
+
+// The card just expired: its buttons are locked by lockApprovalCard(), and a
+// newer prompt (or a fresh list) must not stay locked because of it.
+function lockedCard() {
+  return $('apAllow').disabled;
+}
+
+function lockApprovalCard() {
+  $('apAllow').disabled = $('apDeny').disabled = $('apAlways').disabled = $('apSkip').disabled = $('apCustomSend').disabled = true;
+  document.querySelectorAll('#apChoices .ap-opt').forEach((b) => { b.disabled = true; });
+}
 
 // The live stream reconnects every minute on Wi-Fi and starts at the agent's current sequence, so anything emitted
 // while it was down is never replayed. An approval lost that way leaves the command waiting in the dark with nothing
