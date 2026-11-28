@@ -759,19 +759,23 @@ W.sessions = {
       const timer = setInterval(load, 3000);
       return () => { gone = true; clearInterval(timer); };
     };
-    // WorkBuddy's setup check: three lines — the hook, the approval switch and the heartbeat's age.
-    // Anything that cannot be read says "unknown" rather than "on": a check that fails must not
-    // pass itself (fail-loud). Values go in with textContent only.
+    // WorkBuddy's setup check: three lines — the hook, the approval switch and the heartbeat's
+    // age. All of them come from the agent's own "work" frame (D.work.workbuddy: booleans the
+    // agent judged — the hook's settings path names the user's home folder and never travels),
+    // so the card also works over Wi-Fi and USB and never phones home for the path. Anything
+    // that cannot be read says "unknown" rather than "on": a check that fails must not pass
+    // itself (fail-loud). Values go in with textContent only.
     const workbuddyCheck = async (panel, s) => {
       const box = h('div', 'session-conv wb-check');
       panel.append(box);
+      const wb = D.work?.workbuddy || null; // the agent's booleans; null when the agent is older
       // the heartbeat the row's own freshness is judged on; since is a status-change time and can differ
       const beat = s.heartbeat ?? s.since;
       const beatAge = beat != null ? Math.max(0, Math.round((Date.now() - beat) / 1000)) : null;
       const rows = [
-        [tp('Hook'), api('/workbuddy/hook').then((d) => d.installed ? d.path || tp('installed') : tp('not installed'))],
-        [tp('Phone approvals'), api('/workbuddy/hook').then((d) => d.approvals === true ? tp('on') : d.approvals === false ? tp('off') : null)],
-        [tp('Last heartbeat'), Promise.resolve(beatAge == null ? null : beatAge > 90 ? tp('stale') : tpv('{n}s ago', { n: beatAge }))],
+        [tp('Hook'), Promise.resolve(wb == null ? null : wb.installed === true ? tp('installed') : wb.installed === false ? tp('not installed') : null)],
+        [tp('Agent setting'), Promise.resolve(wb == null ? null : wb.approvals === true ? tp('on') : wb.approvals === false ? tp('off') : null)],
+        [tp('Last heartbeat'), Promise.resolve(s.recent === true ? tpv('{n}s ago', { n: beatAge ?? 0 }) : s.recent === false ? tp('stale') : beatAge == null ? null : beatAge > 90 ? tp('stale') : tpv('{n}s ago', { n: beatAge }))],
       ];
       box.replaceChildren(h('div', 'conv-h', tp('WorkBuddy check')), ...await Promise.all(rows.map(async ([label, value]) => {
         let text;
@@ -836,15 +840,18 @@ W.sessions = {
           counts.idle ? tpv('{n} idle', { n: counts.idle }) : '',
           done ? tpv('{n} finished', { n: done }) : '',
           counts.unknown ? tpv('{n} unknown', { n: counts.unknown }) : '',
-        ].filter(Boolean).join(' · ') || (sessions.length ? tpv('{n} unknown', { n: sessions.length }) : t('w.noOpenSessions'));
+        ].filter(Boolean).join(' · ')
+          // rows that are all terminal or unknown are still sessions: the headline
+          // names them instead of contradicting the list with "no open sessions"
+          || (sessions.length ? tpv('{n} sessions', { n: sessions.length }) : t('w.noOpenSessions'));
         const sorted = [...sessions].sort((a, b) => (S_ORDER[a.status] ?? 9) - (S_ORDER[b.status] ?? 9) || b.since - a.since);
         const rows = sorted.length ? sorted.map((s) => {
-          // a row whose heartbeat stopped flowing over 90 s ago dims and gets a staleness badge: the
-          // dot it shows is only as fresh as the feed, so old data says so instead of posing as live.
-          // Only a tool that reports a heartbeat gets the check: a since that records the last status
-          // change (Claude, Cursor) grows on its own while a busy session keeps working, so keying
-          // staleness on it would grey live rows.
-          const stale = s.heartbeat != null && Date.now() - s.heartbeat > 90_000;
+          // a stale row is one the agent itself judged not recent (WorkBuddy's flag, judged on the
+          // computer's clock — the phone never compares its own clock to the computer's): it dims
+          // and gets the badge, because the dot it shows is only as fresh as the feed. Other tools
+          // (Claude, Codex…) send no such flag and never go stale — a since that records the last
+          // status change grows on its own while a busy session keeps working.
+          const stale = s.tool === 'workbuddy' && s.recent === false;
           const row = h('button', 'sess ' + s.status + (stale ? ' stale' : ''),
             h('span', 'st'), h('span', 'tl ' + s.tool, toolIcon(s.tool)),
             h('span', 'sess-main', h('span', 'nm', titleOf(s)), h('span', 'sess-meta', [folderOf(s), [s.model, s.effort].filter(Boolean).join(' · ') || statusText(s)].filter(Boolean).join(' · '))),

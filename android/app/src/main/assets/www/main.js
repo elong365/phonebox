@@ -1129,6 +1129,18 @@ export function notifyTransitions(sessions) {
         if (cfg.display?.finishToast !== false) toast(t('panel.sessionFinished', { name: s.name }), 'ok');
         finished++;
       }
+      // WorkBuddy has no idle: its busy turn ends as completed/stopped/failed (a final
+      // state), or reads unknown when its feed went quiet — and only a quiet feed (the
+      // agent's own recent=false, not the phone's clock) counts as an end, so a live
+      // unknown never chimes. Its states before this PR read busy only, so this brings
+      // back the reminder the old busy→idle path used to give.
+      else if (s.tool === 'workbuddy' && before === 'busy'
+        && (s.status === 'completed' || s.status === 'stopped' || s.status === 'failed'
+          || (s.status === 'unknown' && s.recent === false))) {
+        buzz('0,70,110,70');
+        if (cfg.display?.finishToast !== false) toast(t('panel.sessionFinished', { name: s.name }), 'ok');
+        finished++;
+      }
     }
     prevStatus.set(s.id, s.status);
   }

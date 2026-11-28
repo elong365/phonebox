@@ -113,6 +113,53 @@ public sealed class WorkBuddySessionsTests : IDisposable
         Assert.Equal("completed", SessionMonitor.ReadWorkBuddy(_home, pid => true, nowMs: 201).Single().Status);
     }
 
+    [Fact]
+    public void UnrecognisedStatusWordsAreJudgedByTheHeartbeat()
+    {
+        var dir = Directory.CreateDirectory(Path.Combine(_home, ".workbuddy", "sessions"));
+        // a future WorkBuddy may write states this agent has never seen ("waiting",
+        // "busy", "paused"…): a word outside the known set says nothing on its own, so
+        // it must not pass as healthy ("busy" would) nor ring the input bell ("waiting"
+        // would) — the heartbeat's freshness decides, exactly as when no field is there
+        File.WriteAllText(Path.Combine(dir.FullName, "90.json"), """
+            {"pid":90,"kind":"interactive","sessionId":"odd","cwd":"/work/odd","startedAt":100,
+             "lastHeartbeat":200,"status":"waiting"}
+            """);
+        File.WriteAllText(Path.Combine(dir.FullName, "91.json"), """
+            {"pid":91,"kind":"interactive","sessionId":"odd2","cwd":"/work/odd2","startedAt":100,
+             "lastHeartbeat":200,"outcome":"paused"}
+            """);
+        var rows = SessionMonitor.ReadWorkBuddy(_home, pid => true, nowMs: 201).ToDictionary(s => s.Id);
+        // a fresh heartbeat with an unrecognised word: busy (a turn may well still run)
+        Assert.Equal("busy", rows["workbuddy:odd"].Status);
+        Assert.Equal("busy", rows["workbuddy:odd2"].Status);
+        Assert.Null(rows["workbuddy:odd"].Outcome);
+        Assert.Null(rows["workbuddy:odd2"].Outcome);
+        // the same words over a heartbeat that went quiet: unknown, never healthy
+        var stale = SessionMonitor.ReadWorkBuddy(_home, pid => true, nowMs: 200 + 90_001).ToDictionary(s => s.Id);
+        Assert.Equal("unknown", stale["workbuddy:odd"].Status);
+        Assert.Equal("unknown", stale["workbuddy:odd2"].Status);
+    }
+
+    /// <summary>The sessions the phone gets carry the feed's freshness as the agent itself
+    /// judges it (Recent), so the panel's stale badge never compares its own clock against
+    /// the computer's timestamps; only tools that report a heartbeat carry it.</summary>
+    [Fact]
+    public void SessionsCarryTheFreshnessTheAgentJudged()
+    {
+        var dir = Directory.CreateDirectory(Path.Combine(_home, ".workbuddy", "sessions"));
+        File.WriteAllText(Path.Combine(dir.FullName, "95.json"), """
+            {"pid":95,"kind":"interactive","sessionId":"fresh","cwd":"/work/fresh","startedAt":100,
+             "lastHeartbeat":200}
+            """);
+        var rows = SessionMonitor.ReadWorkBuddy(_home, pid => true, nowMs: 201).ToDictionary(s => s.Id);
+        Assert.True(rows["workbuddy:fresh"].Recent);
+        Assert.Equal(200, rows["workbuddy:fresh"].Heartbeat);
+        var stale = SessionMonitor.ReadWorkBuddy(_home, pid => true, nowMs: 200 + 90_001).Single();
+        Assert.False(stale.Recent);
+        Assert.Equal("unknown", stale.Status);
+    }
+
     [Theory]
     [InlineData(true, true, true, true)]
     [InlineData(true, true, false, false)]
@@ -161,19 +208,21 @@ public sealed class WorkBuddySessionsTests : IDisposable
         Assert.False(ClaudeHook.Installed(path, WorkBuddyHook.Endpoint));
     }
 
-    /// <summary>The phone-safe diagnostics the self-check card reads over Wi-Fi: the hook's installed
-    /// flag and the approval switch, and nothing else; the endpoint is whitelisted for exactly that route.</summary>
+    /// <summary>The phone-safe diagnostics reach the phone inside the "work" feed: the hook's
+    /// installed flag (exported by WorkBuddyHook) and the approval switch, as booleans only —
+    /// the settings path names the user's home folder and never leaves this computer, so the
+    /// hook status endpoint stays local and off the LAN/USB allow-list.</summary>
     [Fact]
-    public void TheHookStatusEndpointCarriesTheApprovalSwitchAndIsWhitelisted()
+    public void TheHookStatusStaysLocalAndTheWorkFeedCarriesTheSwitches()
     {
         var path = Path.Combine(_home, "config-hook.json");
         File.WriteAllText(path, """{"workbuddy": {"phoneApprovals": true}}""");
         var cfg = new ConfigStore(path).Get();
         Assert.True(cfg.WorkBuddy.PhoneApprovals);
-        Assert.True(Lan.AllowedOverLan("/api/workbuddy/hook"));   // the self-check's read
-        Assert.False(Lan.AllowedOverLan("/api/workbuddy/hook/extra")); // only the one route
-        // the POST/DELETE that write the settings file stay local-only
-        Assert.False(Lan.AllowedOverLan("/api/workbuddy/hook/other"));
+        // the phone's own paths (the work feed, with the switches) stay open; the hook status
+        // endpoint, whose answer carries the settings path, does not
+        Assert.True(Lan.AllowedOverLan("/api/work"));
+        Assert.False(Lan.AllowedOverLan("/api/workbuddy/hook"));
     }
 
     public void Dispose() => Directory.Delete(_home, recursive: true);
