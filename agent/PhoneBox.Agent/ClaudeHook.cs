@@ -84,13 +84,17 @@ public static class ClaudeHook
     }
 
     /// <summary>
-    /// The safety policy is judged on the trusted side (the agent): the phone only
-    /// presents what is decided here, and only this list may ever grow — it can
-    /// only tighten, never loosen. The write-class tools and every MCP tool (their
-    /// names alone do not say read from write, so they all count as writes).
+    /// Fail-closed whitelist: only the known read-only tools pass; everything
+    /// else is high risk — unknown tools, tools Claude Code may add in the
+    /// future, PowerShell on Windows, every MCP tool (their names alone do
+    /// not say read from write, so they all count as writes) and the empty
+    /// string. The safety policy is judged on the trusted side (the agent):
+    /// the phone only presents what is decided here, and only this list may
+    /// ever grow — it can only tighten, never loosen.
     /// </summary>
     internal static bool IsHighRisk(string tool) =>
-        tool is "Write" or "Edit" or "MultiEdit" or "NotebookEdit" or "Bash" || tool.StartsWith("mcp__");
+        tool is not ("Read" or "Glob" or "Grep" or "LS" or "WebFetch" or "WebSearch"
+            or "TodoWrite" or "AskUserQuestion");
 
     /// <summary>
     /// Shows one permission request (in the Claude Code PermissionRequest shape: tool_name, tool_input, cwd,

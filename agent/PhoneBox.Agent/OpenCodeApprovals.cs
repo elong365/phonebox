@@ -639,20 +639,16 @@ public sealed class OpenCodeApprovals : BackgroundService
         return project.Length == 0 ? "opencode" : project;
     }
 
-    /// <summary>The write classes Claude's list covers, in OpenCode's action names. The list is
-    /// hardcoded here (the agent is the trusted end) and can only ever be tightened, never
-    /// loosened from the phone; question forms are not permissions and are never marked. An MCP
-    /// tool names itself <server>_<tool> — the underscore shape — and names alone do not say
-    /// read from write, so every MCP tool counts as a write (matching Claude's mcp__ list);
-    /// the built-in actions (each a single word, none an MCP name) are named out before it.</summary>
+    /// <summary>Fail-closed whitelist: only the known read-only actions pass; everything
+    /// else is high risk — unknown words, plugin actions, actions OpenCode may add in
+    /// the future, "shell", "edit", "execute" (it runs AI-written code), "external_directory"
+    /// and every MCP tool (an MCP tool names itself <server>_<tool> — the underscore shape —
+    /// and names alone do not say read from write). The list is hardcoded here (the agent is
+    /// the trusted end) and can only ever be tightened, never loosened from the phone;
+    /// question forms are not permissions and are never marked.</summary>
     internal static bool IsHighRisk(string action) =>
-        action is "shell" or "edit"
-        || (IsBuiltInNonWrite(action) is false && action.Contains('_') && action is not "external_directory");
-
-    // opens a folder outside the project: reading, not writing (the choice is the user's)
-    private static bool IsBuiltInNonWrite(string action) =>
-        action is "read" or "glob" or "grep" or "webfetch" or "websearch"
-            or "subagent" or "skill" or "question" or "execute";
+        action is not ("read" or "glob" or "grep" or "webfetch" or "websearch"
+            or "subagent" or "skill" or "question");
 
     /// <summary>What the card's headline says, per OpenCode permission action (plugins may add their own).</summary>
     internal static string ToolTitle(string action) => action switch

@@ -10,14 +10,31 @@ public sealed class ApprovalHighRiskTests
     [InlineData("MultiEdit", true)]
     [InlineData("NotebookEdit", true)]
     [InlineData("Bash", true)]
+    [InlineData("PowerShell", true)] // Claude Code on Windows
     [InlineData("mcp__x__y", true)]
     [InlineData("mcp__server__write_file", true)]
     [InlineData("Read", false)]
     [InlineData("Glob", false)]
+    [InlineData("Grep", false)]
+    [InlineData("LS", false)]
     [InlineData("WebFetch", false)]
+    [InlineData("WebSearch", false)]
+    [InlineData("TodoWrite", false)]
     [InlineData("AskUserQuestion", false)]
-    [InlineData("mcp", false)] // the prefix is mcp__, not mcp
+    [InlineData("mcp", true)] // not on the whitelist: fail-closed (the old exemption was the prefix itself, which says nothing)
     public void JudgesTheWriteClassToolsHighRisk(string tool, bool expected) =>
+        Assert.Equal(expected, ClaudeHook.IsHighRisk(tool));
+
+    // fail-closed: anything outside the read-only whitelist is high risk —
+    // an empty tool name, a tool Claude Code adds in the future, an
+    // orchestrating agent tool no one has named yet
+    [Theory]
+    [InlineData("", true)]
+    [InlineData("ExitPlanMode", true)]
+    [InlineData("Task", true)]
+    [InlineData("SomeFutureTool", true)]
+    [InlineData("Read", false)]
+    public void UnknownToolsAreHighRisk(string tool, bool expected) =>
         Assert.Equal(expected, ClaudeHook.IsHighRisk(tool));
 
     [Fact]

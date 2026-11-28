@@ -1379,8 +1379,13 @@ export async function loadApprovals() {
   try {
     // api() gives up after 2.5s by default: plenty for a tap, too little for a list request on a phone that
     // dozes, and the abort then looked exactly like a broken connection.
+    // The offset is taken against the midpoint of send and receive: the
+    // response's now is stamped on the agent somewhere in between, so
+    // comparing it against the receive time alone would blame the whole
+    // round trip on the phone's clock.
+    const sentAt = Date.now();
     const res = await api('/approvals', 'GET', 8000);
-    if (typeof res.now === 'number') agentOffset = res.now - Date.now();
+    if (typeof res.now === 'number') agentOffset = res.now - (sentAt + Date.now()) / 2;
     approvals = stillOpen(res.items || []);
   } catch (e) {
     const msg = (e && e.message) || String(e);
@@ -1546,9 +1551,14 @@ export function tickApproval() {
     // answerable here, not even in the seconds before the card goes away
     lockApprovalCard();
     $('apTime').textContent = t('panel.askingInTerminal');
-    // three seconds to read why the card went dark, then it leaves
+    // three seconds to read why the card went dark, then it leaves. The id is
+    // captured: a newer card that arrives in those seconds must not be the
+    // one shifted out, and the expired card must leave even if a newer one
+    // now sits on top of the list.
+    const expiredId = a.id;
     setTimeout(() => {
-      if (approvals[0] && approvals[0].expiresAt <= approvalNow()) { approvals.shift(); renderApproval(); }
+      const i = approvals.findIndex((x) => x.id === expiredId && x.expiresAt <= approvalNow());
+      if (i >= 0) { approvals.splice(i, 1); renderApproval(); }
     }, 3000);
   }
 }
@@ -1601,8 +1611,18 @@ export async function decide(decision, value, label) {
       const stillCounting = approvalShown === a.id && alwaysCountdown !== null;
       clearConfirmAllow();
       // an expired card stays dark: the agent refuses its answers, so
-      // a failed post must not light the buttons back up
-      if (approvals[0].expiresAt <= approvalNow()) return;
+      // a failed post must not light the buttons back up. It still
+      // schedules its own exit: tickApproval skips locked cards, so
+      // without this the dark card would sit here until the next
+      // successful list request lets it go.
+      if (approvals[0].expiresAt <= approvalNow()) {
+        const expiredId = a.id;
+        setTimeout(() => {
+          const i = approvals.findIndex((x) => x.id === expiredId && x.expiresAt <= approvalNow());
+          if (i >= 0) { approvals.splice(i, 1); renderApproval(); }
+        }, 3000);
+        return;
+      }
       $('apAllow').disabled = $('apDeny').disabled = $('apSkip').disabled = $('apCustomSend').disabled = false;
       $('apAllow').textContent = t('panel.allow');
       $('apAlways').disabled = stillCounting;
@@ -1622,29 +1642,36 @@ export async function decide(decision, value, label) {
   renderApproval();
 }
 // A high-risk write (judged by the agent, the card only carries the flag) does
-// not allow on the first tap: the Allow button becomes a "tap again to
-// confirm" for a few seconds, and only a second tap sends the answer. Deny is
-// never held back. The arm resets with every new card.
-let confirmAllow = null;
+// not allow on the first tap: the tapped button becomes a "tap again to
+// confirm" for a few seconds, and only a second tap on it sends the answer.
+// The gate covers Allow and Always alike — a permanent rule deserves the same
+// second look. Deny is never held back. The arm resets with every new card.
+let confirmAllow = null; // the id of the button that is armed, or null
 
-function armConfirmAllow() {
+function armConfirmAllow(btnId) {
   clearConfirmAllow();
-  const b = $('apAllow');
+  const b = $(btnId);
   const id = approvalShown;
   let left = 5;
   b.textContent = `${t('panel.confirmAllow')} · ${left}`;
-  confirmAllow = setInterval(() => {
+  confirmAllow = btnId;
+  confirmAllowTimer = setInterval(() => {
     left -= 1;
     if (left > 0 && approvalShown === id) { b.textContent = `${t('panel.confirmAllow')} · ${left}`; return; }
-    clearConfirmAllow();
-    // back to a plain Allow while this card is still the one on screen
-    if (approvalShown === id && approvals[0] && approvals[0].id === id && !submitting.has(id))
-      b.textContent = t('panel.allow');
+    clearConfirmAllow(); // puts the plain label back on the button too
   }, 1000);
 }
 
+let confirmAllowTimer = null;
+
 function clearConfirmAllow() {
-  if (confirmAllow !== null) { clearInterval(confirmAllow); confirmAllow = null; }
+  if (confirmAllowTimer !== null) { clearInterval(confirmAllowTimer); confirmAllowTimer = null; }
+  // the plain label goes back on the armed button: the buttons are shared
+  // between cards, and renderApproval only relabels Allow, so an armed
+  // Always must not carry its "tap again" text over to the next card
+  if (confirmAllow !== null)
+    $(confirmAllow).textContent = t(confirmAllow === 'apAlways' ? 'panel.allowAlways' : 'panel.allow');
+  confirmAllow = null;
 }
 
 // The tap that armed the confirm, so a double-tap cannot ride through it: two taps under
@@ -1652,17 +1679,30 @@ function clearConfirmAllow() {
 // stays armed and the second tap is ignored; a deliberate confirm comes after a pause.
 let armedAt = 0;
 
-$('apAllow').addEventListener('click', () => {
+// The second-tap gate for the two yes buttons: a high-risk card arms the
+// tapped button on the first tap, and the second tap (after the pause)
+// sends the decision. Decisions that are not held back pass straight through.
+function confirmGate(btnId, decision) {
   const a = approvals[0];
-  if (a && a.highRisk && confirmAllow === null && !submitting.has(a.id)) {
+  const risk = a && (a.kind === 'permission' || !a.kind) && !!a.highRisk;
+  if (a && risk && confirmAllow === null && !submitting.has(a.id)) {
     armedAt = Date.now();
-    armConfirmAllow();
+    armConfirmAllow(btnId);
     return;
   }
-  if (a && a.highRisk && confirmAllow !== null && Date.now() - armedAt < 400) return; // a double-tap keeps the arm
-  decide('allow');
-});
-$('apAlways').addEventListener('click', () => decide('always'));
+  if (a && risk && confirmAllow !== null && Date.now() - armedAt < 400) return; // a double-tap keeps the arm
+  // armed on the other button: this tap starts its own gate cleanly
+  if (a && risk && confirmAllow !== null && confirmAllow !== btnId) {
+    clearConfirmAllow();
+    armedAt = Date.now();
+    armConfirmAllow(btnId);
+    return;
+  }
+  decide(decision);
+}
+
+$('apAllow').addEventListener('click', () => confirmGate('apAllow', 'allow'));
+$('apAlways').addEventListener('click', () => confirmGate('apAlways', 'always'));
 $('apDeny').addEventListener('click', () => decide('deny'));
 $('apSkip').addEventListener('click', () => decide('skip'));
 // Expanding the detail only re-renders with what the card already carries.

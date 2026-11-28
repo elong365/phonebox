@@ -5,10 +5,15 @@
 **Agent**
 - **Approvals**: the card counts down the seconds left to answer, locks its buttons the moment
   the time is out, expands the full command detail on demand, and asks for a second tap before
-  allowing a high-risk write (decided by the agent, never widened on the phone). OpenCode
-  write-class actions now require this high-risk confirmation too — `shell` (Bash), `edit`
-  and every MCP tool, while reads, web fetches, subagents, skills and questions stay one-tap.
-  Behavior change: OpenCode prompts that used to allow on the first tap now ask twice.
+  allowing a prompt the agent has marked high-risk (the marking is agent-side; the second tap
+  guards against a mistap, not against a trusted phone — never widened on it). Both yes buttons
+  are behind the gate: a high-risk prompt needs the second tap on Allow and on Always allow alike,
+  and the tapped button is the one that shows "tap again to confirm". OpenCode's judgment is
+  fail-closed: only the known read-only actions stay one-tap — `shell`, `edit`, `execute` (it
+  runs AI-written code), `external_directory` and every MCP tool are high-risk, and so is any
+  action the list does not name, be it a plugin's or one OpenCode adds in the future. Claude's
+  list is fail-closed the same way, which puts PowerShell (Windows) and any future tool behind
+  the gate too. Behavior change: prompts that used to allow on the first tap now ask twice.
 
 ## 0.9.31 — 2026-11-27
 

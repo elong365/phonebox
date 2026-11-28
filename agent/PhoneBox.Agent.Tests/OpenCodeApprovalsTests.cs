@@ -401,9 +401,12 @@ public sealed class OpenCodeApprovalsTests : IDisposable
         Assert.Equal(expected, actual);
     }
 
-    // the same write classes Claude's list covers, in OpenCode's action names:
-    // shell (Bash), edit (Edit/Write) and any MCP tool (the underscore shape —
-    // names alone do not say read from write). Reads and web reads stay one-tap.
+    // fail-closed whitelist: only the known read-only actions pass;
+    // everything else is high risk — shell, edit, execute (it runs
+    // AI-written code), external_directory (it opens a folder outside
+    // the project), any MCP tool (the underscore shape) and any action
+    // the whitelist does not name, be it a plugin's or one OpenCode adds
+    // in the future.
     [Fact]
     public void WriteClassActionsAreMarkedHighRisk()
     {
@@ -418,9 +421,20 @@ public sealed class OpenCodeApprovalsTests : IDisposable
         Assert.False(OpenCodeApprovals.IsHighRisk("subagent"));
         Assert.False(OpenCodeApprovals.IsHighRisk("skill"));
         Assert.False(OpenCodeApprovals.IsHighRisk("question"));  // questions are never permissions
-        Assert.False(OpenCodeApprovals.IsHighRisk("execute"));
-        Assert.False(OpenCodeApprovals.IsHighRisk("external_directory"));
+        Assert.True(OpenCodeApprovals.IsHighRisk("execute"));    // it runs AI-written code
+        Assert.True(OpenCodeApprovals.IsHighRisk("external_directory")); // not on the read-only whitelist
     }
+
+    // fail-closed: anything outside the read-only whitelist is high risk —
+    // an empty action, a plugin's own action, a word no one has named yet
+    [Theory]
+    [InlineData("", true)]
+    [InlineData("someplugin_action", true)]
+    [InlineData("custom_action", true)]
+    [InlineData("weird", true)]
+    [InlineData("read", false)]
+    public void UnknownActionsAreHighRisk(string action, bool expected) =>
+        Assert.Equal(expected, OpenCodeApprovals.IsHighRisk(action));
 
     // a permission request whose action is a write class carries HighRisk on the
     // card; the question form channel never does (questions are not permissions)
