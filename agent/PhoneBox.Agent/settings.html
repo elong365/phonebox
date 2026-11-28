@@ -924,7 +924,7 @@ nav a.on::before { color: var(--accent); }
         <div class="field" style="max-width:260px;margin-top:12px"><label for="workBuddyTimeout" data-i18n="s.claude.timeout">Seconds to answer before the terminal takes over</label><input id="workBuddyTimeout" type="number" min="10" max="3600" data-bind="workBuddy.timeoutSec" data-type="int"></div>
         <p class="hint" data-i18n="s.claude.timeoutReinstall">Each hook keeps the seconds it was installed with: after changing them, remove the hook and install it again.</p>
         <label class="check"><input type="checkbox" data-bind="workBuddy.sessions"> <span data-i18n="s.workbuddy.sessions">Show WorkBuddy sessions</span></label>
-        <label class="check"><input type="checkbox" data-bind="workBuddy.events"> <span data-i18n="s.workbuddy.events">Tell the phone when a WorkBuddy chat waits, fails or completes</span></label>
+        <label class="check"><input type="checkbox" data-bind="workBuddy.events"> <span data-i18n="s.workbuddy.events">Tell the phone when a WorkBuddy chat fails, finishes or is stopped</span></label>
 
         <div class="row" style="margin:14px 0 4px"><b style="min-width:92px">OpenCode</b></div>
         <p class="hint" style="margin:-2px 0 12px" data-i18n="s.opencode.hint">OpenCode permission prompts and agent questions reach the phone while its background service is running. Off until you turn it on here. Allow always saves the requested pattern for the project, so it arms only after a short countdown.</p>
@@ -2966,7 +2966,7 @@ const tl = (s) => (window.PhoneBoxI18n?.tc ? window.PhoneBoxI18n.tc(s) : s);
 const TRIGGERS = {
   'session-waiting': { label: 'an AI session needs me', match: 'any project (or: api|docs, codex)' },
   'session-busy': { label: 'an AI session is working', match: 'any project (or: api|docs, codex)' },
-  'wb-status': { label: 'a WorkBuddy chat is', match: 'waiting|failed (or: completed|busy|unknown)' },
+  'wb-status': { label: 'a WorkBuddy chat is', match: 'failed (or: completed|busy|unknown)' },
   'media-playing': { label: 'music or video plays', match: 'any app (or: Spotify|Music)' },
   'process-running': { label: 'an app is running', match: 'zoom|Teams|obs64' },
   'app-in-front': { label: 'an app is in front', match: 'Code|obs64|Safari' },

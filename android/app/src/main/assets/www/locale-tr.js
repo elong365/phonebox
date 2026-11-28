@@ -1110,6 +1110,7 @@ window.PhoneBoxLocaleData = Object.assign(window.PhoneBoxLocaleData || {}, {
       "an AI quota is above": "AI kotası üzerinde",
       "an AI session is working": "Bir AI oturumu çalışıyor",
       "an AI session needs me": "AI oturumu bana ihtiyaç duyuyor",
+      "a WorkBuddy chat is": "Bir WorkBuddy sohbeti",
       "an app is in front": "Önde bir uygulama var",
       "an app is running": "bir uygulama çalışıyor",
       "any (or: claude|codex)": "herhangi bir (or: claude|codex)",

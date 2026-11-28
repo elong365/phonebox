@@ -1333,7 +1333,7 @@ export function handleNotify(d) {
   // "key|arg" carries a translatable text (the agent sends the i18n key, the
   // project name as its argument): a text without the separator stays as sent
   const split = typeof d.text === 'string' && d.text.includes('|') ? d.text.split('|') : null;
-  const text = split && split[0].endsWith('wbEvents.') ? t(split[0], { project: split.slice(1).join('|') }) : d.text;
+  const text = split && split[0].startsWith('wbEvents.') ? t(split[0], { project: split.slice(1).join('|') }) : d.text;
   if (d.wake && nightOn) { wakeUntil = Date.now() + 30_000; setNight(false); }
   undim();
   toast(text || '', level, d.title || '', d.seconds || 5);
