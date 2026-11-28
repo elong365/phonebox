@@ -1363,6 +1363,14 @@ function stillOpen(items) {
   return items.filter((x) => !answered.has(x.id));
 }
 
+// The card's expiresAt is a timestamp of the agent's clock, so the countdown and the lock
+// read the agent's now, not the phone's: the offset (agent now − phone now) from each list
+// request turns the phone's own Date.now() into the agent's. A phone clock a minute fast
+// would otherwise lock a card the agent still accepts, and one too slow would ring a card
+// back that the agent has already let go.
+let agentOffset = 0;
+const approvalNow = () => Date.now() + agentOffset;
+
 let approvalBusy = false;
 
 export async function loadApprovals() {
@@ -1371,7 +1379,9 @@ export async function loadApprovals() {
   try {
     // api() gives up after 2.5s by default: plenty for a tap, too little for a list request on a phone that
     // dozes, and the abort then looked exactly like a broken connection.
-    approvals = stillOpen((await api('/approvals', 'GET', 8000)).items || []);
+    const res = await api('/approvals', 'GET', 8000);
+    if (typeof res.now === 'number') agentOffset = res.now - Date.now();
+    approvals = stillOpen(res.items || []);
   } catch (e) {
     const msg = (e && e.message) || String(e);
     // Logged, never shown. The boot panel is for faults that need a new build; a list request that fails is
@@ -1392,7 +1402,9 @@ export function renderApproval() {
   if (!a) { box.hidden = true; approvalShown = null; detailExpanded = false; stopAlwaysCountdown(); return; }
   if (approvalShown !== a.id) {
     approvalShown = a.id;
-    detailExpanded = false;
+    // a high-risk card opens with the full command on screen: the
+    // truncated text is exactly where a dangerous tail would hide
+    detailExpanded = !!a.highRisk;
     clearConfirmAllow();
     $('apAllow').textContent = t('panel.allow');
     lastTouch = Date.now();
@@ -1447,12 +1459,13 @@ export function renderApproval() {
   $('apRisk').textContent = risk ? t('panel.highRisk') : '';
   $('apRisk').hidden = !risk;
   // the detail collapses to its first lines when it is long: the whole text is
-  // already in a.detail, so expanding never calls the agent again
+  // already in a.detail, so expanding never calls the agent again. The cut ends with
+  // "…", so a truncated command never reads as if it were the whole one.
   const detail = a.detail || '';
   const CLAMP_CHARS = 400;
   const longDetail = detail.length > CLAMP_CHARS || detail.split('\n').length > 6;
   const shown = detailExpanded ? detail : longDetail && !detailExpanded
-    ? detail.split('\n').slice(0, 6).join('\n').slice(0, CLAMP_CHARS) : detail;
+    ? detail.split('\n').slice(0, 6).join('\n').slice(0, CLAMP_CHARS) + '…' : detail;
   $('apDetail').textContent = shown;
   $('apDetail').hidden = !a.detail;
   const toggle = $('apDetailToggle');
@@ -1503,7 +1516,7 @@ function startAlwaysCountdown(seconds) {
     stopAlwaysCountdown();
     // an expired card stays locked: the card's own countdown has locked the
     // decisions, and this one must not re-enable its button after that
-    if (approvals[0] && approvals[0].expiresAt <= Date.now()) return;
+    if (approvals[0] && approvals[0].expiresAt <= approvalNow()) return;
     if (approvalShown === id && approvals[0] && approvals[0].id === id && !submitting.has(id)) {
       b.disabled = false;
       b.textContent = t('panel.allowAlways');
@@ -1518,7 +1531,7 @@ function stopAlwaysCountdown() {
 export function tickApproval() {
   const a = approvals[0];
   if (!a || $('approval').hidden) return;
-  const left = a.expiresAt - Date.now();
+  const left = a.expiresAt - approvalNow();
   // the seconds left on the card as mm:ss while the countdown runs; a prompt
   // that expires stops at 0:00 instead of counting into the negative
   const mmss = (ms) => {
@@ -1527,15 +1540,15 @@ export function tickApproval() {
   };
   $('apTime').textContent = a.kind === 'question' ? t('panel.answerInTerminal')
     : left > 0 ? t('panel.askedInTerminalIn', { time: mmss(left) })
-    : t('panel.askedInTerminal');
+    : t('panel.askingInTerminal');
   if (left <= 0 && !lockedCard()) {
     // expired: every button locks at once — an expired prompt must not be
     // answerable here, not even in the seconds before the card goes away
     lockApprovalCard();
-    $('apTime').textContent = t('panel.askedInTerminal');
+    $('apTime').textContent = t('panel.askingInTerminal');
     // three seconds to read why the card went dark, then it leaves
     setTimeout(() => {
-      if (approvals[0] && approvals[0].expiresAt <= Date.now()) { approvals.shift(); renderApproval(); }
+      if (approvals[0] && approvals[0].expiresAt <= approvalNow()) { approvals.shift(); renderApproval(); }
     }, 3000);
   }
 }
@@ -1587,6 +1600,9 @@ export async function decide(decision, value, label) {
     if (approvals[0] && approvals[0].id === a.id) {
       const stillCounting = approvalShown === a.id && alwaysCountdown !== null;
       clearConfirmAllow();
+      // an expired card stays dark: the agent refuses its answers, so
+      // a failed post must not light the buttons back up
+      if (approvals[0].expiresAt <= approvalNow()) return;
       $('apAllow').disabled = $('apDeny').disabled = $('apSkip').disabled = $('apCustomSend').disabled = false;
       $('apAllow').textContent = t('panel.allow');
       $('apAlways').disabled = stillCounting;
@@ -1631,9 +1647,19 @@ function clearConfirmAllow() {
   if (confirmAllow !== null) { clearInterval(confirmAllow); confirmAllow = null; }
 }
 
+// The tap that armed the confirm, so a double-tap cannot ride through it: two taps under
+// 400 ms apart are one accidental double-click, not "tap, read, tap to confirm". The card
+// stays armed and the second tap is ignored; a deliberate confirm comes after a pause.
+let armedAt = 0;
+
 $('apAllow').addEventListener('click', () => {
   const a = approvals[0];
-  if (a && a.highRisk && confirmAllow === null && !submitting.has(a.id)) { armConfirmAllow(); return; }
+  if (a && a.highRisk && confirmAllow === null && !submitting.has(a.id)) {
+    armedAt = Date.now();
+    armConfirmAllow();
+    return;
+  }
+  if (a && a.highRisk && confirmAllow !== null && Date.now() - armedAt < 400) return; // a double-tap keeps the arm
   decide('allow');
 });
 $('apAlways').addEventListener('click', () => decide('always'));

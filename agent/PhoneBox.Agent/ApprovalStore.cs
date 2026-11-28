@@ -50,6 +50,11 @@ public sealed class ApprovalStore(PushStore events, ILogger<ApprovalStore> log)
         return _pending.Values.Select(p => p.Approval).Where(a => a.ExpiresAt > now).OrderBy(a => a.CreatedAt).ToList();
     }
 
+    /// <summary>This agent's clock in epoch milliseconds; the phone's countdown is corrected by
+    /// the offset between this and its own clock, so a drifting phone clock never locks a card
+    /// early (or rings one back after the agent has already moved on).</summary>
+    public long AgentNow() => _clock.GetUtcNow().ToUnixTimeMilliseconds();
+
     /// <summary>Shows the request on the phone and waits for "allow" / "deny"; null = no answer (fall back to the terminal).</summary>
     /// <summary>Notes in the log why a coding agent's prompt was left to its own window instead of the phone.</summary>
     public void Skipped(string source, string reason) =>

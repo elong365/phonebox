@@ -898,7 +898,7 @@
     if (path === '/api/procs') return json(procs());
     if (path === '/api/procs/detail') return json(procDetail(q.get('name')));
     if (path.startsWith('/api/widget/')) return json({ output: String(3 + Math.floor(Math.random() * 3)), at: now() - 8000, ok: true, running: false, durationMs: 412 });
-    if (path === '/api/approvals' && method === 'GET') return json({ items: approvals.filter((a) => a.expiresAt > now()) });
+    if (path === '/api/approvals' && method === 'GET') return json({ items: approvals.filter((a) => a.expiresAt > now()), now: Date.now() });
     if (path.startsWith('/api/approvals/') && method === 'POST') {
       const id = decodeURIComponent(path.slice(15));
       if (!approvals.some((a) => a.id === id)) return json({}, 404);

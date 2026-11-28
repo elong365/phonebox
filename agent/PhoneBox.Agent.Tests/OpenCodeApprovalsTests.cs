@@ -433,7 +433,7 @@ public sealed class OpenCodeApprovalsTests : IDisposable
         await monitor.PollOnceAsync(CancellationToken.None);
 
         var a = Assert.Single(store.Snapshot());
-        Assert.Equal("shell", "shell");   // the queue's action
+        Assert.Equal("Run a command", a.Tool);   // the queue's shell action reached the card's headline
         Assert.True(a.HighRisk);
 
         var fake2 = new FakeOpenCode(ProjDir) { QueueJson = """{"data":[]}""", FormsJson = FormOne };

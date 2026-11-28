@@ -5,7 +5,10 @@
 **Agent**
 - **Approvals**: the card counts down the seconds left to answer, locks its buttons the moment
   the time is out, expands the full command detail on demand, and asks for a second tap before
-  allowing a high-risk write (decided by the agent, never widened on the phone).
+  allowing a high-risk write (decided by the agent, never widened on the phone). OpenCode
+  write-class actions now require this high-risk confirmation too — `shell` (Bash), `edit`
+  and every MCP tool, while reads, web fetches, subagents, skills and questions stay one-tap.
+  Behavior change: OpenCode prompts that used to allow on the first tap now ask twice.
 
 ## 0.9.31 — 2026-11-27
 

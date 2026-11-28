@@ -1,4 +1,3 @@
-using System.Text.Json;
 using Microsoft.Extensions.Logging.Abstractions;
 using PhoneBox.Agent;
 using Xunit;
@@ -34,15 +33,9 @@ public sealed class ApprovalHighRiskTests
     [Fact]
     public void AQuestionIsNeverMarkedHighRisk()
     {
-        // the same input DecideAsync receives for AskUserQuestion: questions are
-        // answered, not allowed, so the second-tap gate never applies to them
-        using var doc = JsonDocument.Parse("""{"tool_name":"AskUserQuestion","session_id":"s","cwd":"/work"}""");
-        var input = doc.RootElement;
-        var tool = "AskUserQuestion";
-        var question = true;
-        Assert.True(question);
-        Assert.False(!question && ClaudeHook.IsHighRisk(tool));
+        // the gate DecideAsync applies for AskUserQuestion: a question is answered,
+        // not allowed, so it is never marked — even a write-shaped tool name
+        Assert.False(ClaudeHook.IsHighRisk("AskUserQuestion"));
         Assert.True(ClaudeHook.IsHighRisk("Bash")); // the same tool as a permission would be high-risk
-        _ = input; // the shape is the one the flag is derived from
     }
 }
